@@ -1,21 +1,14 @@
-# Implementation status
+# Software ISP 当前实现状态
 
-## Principle
+以 [当前架构](../CURRENT_ARCHITECTURE.md) 和 [执行证据](../CODEX_EXECUTION_STATUS.md) 为准，核对日期 2026-11-16。
 
-A-level software paths are implemented for host build; hardware and board claims remain NOT_MEASURED.
+| 模块 | 当前源码能力 | 限制 |
+|---|---|---|
+| VirtualSensor/RAW10 | 虚拟场景、Bayer、打包解包、曝光/增益与时间戳 | 非真实 IMX415 采集 |
+| SoftwareIsp | RAW10 → RGB/NV12、软件 AWB、颜色/降噪/锐化和统计 | 非 RKISP/rkAIQ，实际成像质量不能据合成图断言 |
+| AeController/profile | 软件曝光/增益反馈、软件 profile 读写与应用接口 | 非真实 Sensor 寄存器控制；CLI 不提供实时文件监视 |
+| Demo AI | 确定性模拟结果 | ONNX/RKNN 后端未接入，无模型精度证据 |
+| camera_isp_demo | 一路/两路串行虚拟处理、配帧统计、首帧导出 | 拼接不由匹配 FramePair 驱动；不输出完整视频 |
+| reports/isp | Python 辅助合成样例 | 不能证明 C++ AE/AWB 收敛或实际处理帧率 |
 
-## Source and flow
-
-`docs/development/ROUND6_BASELINE.md`
-
-## Parameters and I/O
-
-Inputs are configured through `VirtualSensorConfig`, `IspConfig`, `AeConfig` and the demo command line. Outputs are typed RGB888/NV12 frames, statistics and JSON reports. Bounds and buffer sizes are checked at module boundaries.
-
-## Test method and current result
-
-Run `cmake -S . -B build-host -DBUILD_RK_DEMO=OFF`, `cmake --build build-host`, then `ctest --test-dir build-host --output-on-failure`. The checked-in unit tests cover RAW10, Bayer processing, ISP output, AE/profile behavior, pairing and the demo AI backend. This Windows shell currently has no CMake or C++ compiler, so local build status is `NOT_MEASURED`.
-
-## Known limits and interview prompts
-
-The implementation is a host Software ISP and does not claim RKISP, rkAIQ, RGA, MPP, hardware synchronized exposure or RKNN model accuracy. Explain why each hardware boundary needs board evidence, how RAW10 MSBs are packed, how AE avoids oscillation, and how leases/queues bound shutdown.
+基线已在 MSVC Debug 下编译成功，首轮 CTest 10/11 项通过且有 Software ISP 断言失败。最终修正按用户要求未再构建/测试，详见执行证据；不宣称全部通过或板端通过。

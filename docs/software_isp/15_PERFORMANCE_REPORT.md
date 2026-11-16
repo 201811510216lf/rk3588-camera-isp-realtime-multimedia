@@ -1,21 +1,9 @@
-# Performance report
+# Software ISP 性能记录范围
 
-## Principle
+当前 demo 的 `measured_fps = total / elapsed` 是无实时节流情况下每路迭代次数除以墙钟时间；两路模式串行执行两次处理，不能把该数值写成单模块基准、真实相机采集 FPS 或 RK3588 性能。
 
-camera_isp_demo writes measured wall time and FPS for the current host. 4K@30 is a target input configuration, never an assumed result.
+`--fps` 决定虚拟帧数及时间戳步长；`realtime_pacing=false`。`--duration` 决定虚拟帧数，不承诺执行恰好对应的墙钟时长。
 
-## Source and flow
+仓库 `reports/isp` 由 `scripts/run_round6_reports.py` 产生的图像、曲线和 JSON 是独立辅助合成结果，不是 C++ 性能/收敛实测。真实分辨率、算法配置、编译模式、硬件、墙钟时间、每路/总帧数和输出 I/O 成本应与将来的测量一起记录。
 
-`tools/camera_isp_demo.cpp; reports/isp`
-
-## Parameters and I/O
-
-Inputs are configured through `VirtualSensorConfig`, `IspConfig`, `AeConfig` and the demo command line. Outputs are typed RGB888/NV12 frames, statistics and JSON reports. Bounds and buffer sizes are checked at module boundaries.
-
-## Test method and current result
-
-Run `cmake -S . -B build-host -DBUILD_RK_DEMO=OFF`, `cmake --build build-host`, then `ctest --test-dir build-host --output-on-failure`. The checked-in unit tests cover RAW10, Bayer processing, ISP output, AE/profile behavior, pairing and the demo AI backend. This Windows shell currently has no CMake or C++ compiler, so local build status is `NOT_MEASURED`.
-
-## Known limits and interview prompts
-
-The implementation is a host Software ISP and does not claim RKISP, rkAIQ, RGA, MPP, hardware synchronized exposure or RKNN model accuracy. Explain why each hardware boundary needs board evidence, how RAW10 MSBs are packed, how AE avoids oscillation, and how leases/queues bound shutdown.
+本轮没有新增软件 demo 吞吐测量。已执行的主机检查及未复验范围见 [CODEX_EXECUTION_STATUS.md](../CODEX_EXECUTION_STATUS.md)；4K@30、板端延迟、RGA/MPP/RKNN 和长稳仍未验证。

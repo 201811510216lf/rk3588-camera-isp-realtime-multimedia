@@ -1,5 +1,11 @@
 # Codex 执行规范：RK3588 双路 MIPI RAW / ISP / 同步配帧 / AI 标注 / 拼接推流
 
+> **文档属性：双路需求与实施计划；范围说明更新于 2026-11-16。**
+>
+> 正文描述目标和验收要求，不是已完成功能清单，也不构成板端验证证据。当前代码还包含独立的 VirtualSensor / Software ISP 主机路径；板端双路 V4L2、硬件同步、RKNN/RGA/MPP 和 RTMP/MP4 的实际实现及验证边界以现行架构和状态记录为准。
+>
+> 现行依据：[当前架构](docs/CURRENT_ARCHITECTURE.md) · [执行与验证状态](docs/CODEX_EXECUTION_STATUS.md)。范围说明更新：2026-11-16（Asia/Shanghai）。
+
 > 适用仓库：`rk3588-camera-isp-realtime-multimedia`。**必须在现有仓库增量改造，禁止重建项目**；仅在审计证明现有模块不可复用时替换局部。原先独立的四路 RTSP/四模型/四宫格业务不得重新引入。
 >
 > 业务目标：实验动物顶部 + 侧面双视角监测。两路 RAW Sensor 经 RK3588 BSP 的 CSI/RKCIF/RKISP/rkAIQ 输出，经 V4L2 双路采集，形成时间匹配的帧对，分别运行或共享 RKNN 推理，将检测框叠加到对应路图像，RGA 左右拼接为**一路同步双视角视频**，只编码一次，以 RTMP 实时推流并同时分段 MP4 录像。JSONL 为可选调试记录。

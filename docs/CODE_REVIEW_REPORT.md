@@ -1,5 +1,11 @@
 # RK3588 Camera/ISP 实时多媒体工程审查报告
 
+> **历史审查：早期 legacy + 单路 MIPI 基线。**
+>
+> 本文审查的是单路收敛及后续双路改造前的源码快照。正文中的“当前”、legacy 模块、旧文件行号、缺陷状态和测试结果仅适用于该阶段；相关文件可能已删除或修改，不能直接视为现行架构或现存问题。
+>
+> 现行依据：[当前架构](CURRENT_ARCHITECTURE.md) · [执行与验证状态](CODEX_EXECUTION_STATUS.md)。范围说明更新：2026-11-16（Asia/Shanghai）。
+
 审查日期：2026-11-12（Asia/Shanghai）  
 审查范围：当前仓库源码、CMake、README、脚本、已有测试和 `CODEX_CAMERA_ISP_EXECUTION_PLAN.md`  兼容性：仅新增本报告，未修改业务实现。
 

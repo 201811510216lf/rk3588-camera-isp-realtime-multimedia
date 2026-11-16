@@ -1,5 +1,11 @@
 # G4：Buffer 与线程生命周期
 
+> **历史设计：单路 Capture / Encode / AI 生命周期。**
+>
+> 下文的录像队列、单路 CLI、线程顺序和错误处理属于早期 MipiPipeline 方案。共享 lease 等契约须对照当前源码重核；双路配帧、合成和编码包分发的现行所有权说明见 [双路数据流与生命周期](../PIPELINE_AND_OWNERSHIP.md)。
+>
+> 现行依据：[当前架构](../CURRENT_ARCHITECTURE.md) · [执行与验证状态](../CODEX_EXECUTION_STATUS.md)。范围说明更新：2026-11-16（Asia/Shanghai）。
+
 ## 所有权契约
 
 `V4L2IspCamera::CameraState` 独占 V4L2 `MMAP` 地址、DMA-BUF fd 和 slot 状态。`CameraFrame` 只携带描述、一个 `owner` shared pointer 和一个共享 `FrameLease`；AI/录像消费者不得 `close(fd)`、`munmap` 或直接 `QBUF`。

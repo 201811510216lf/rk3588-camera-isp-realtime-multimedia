@@ -1,5 +1,11 @@
 # RK3588 双路 Camera/ISP + 实时 AI 拼接系统第四轮严格工程审查
 
+> **历史审查：2026-11-13 第四轮双路源码快照。**
+>
+> 本报告保留审查时的 Git 状态、源码行号、缺陷和构建限制。后续软件 ISP、AE/AWB 与其他修正不能从本报告推断为不存在或已验收；其中“当前”和“NOT_IMPLEMENTED”等结论仅限当时范围，具体问题应对照最新源码和测试重核。
+>
+> 现行依据：[当前架构](CURRENT_ARCHITECTURE.md) · [执行与验证状态](CODEX_EXECUTION_STATUS.md)。范围说明更新：2026-11-16（Asia/Shanghai）。
+
 审查日期：2026-11-13（Asia/Shanghai）  
 审查对象：`demo_multhread_decode_infer_mulmodel` 当前工作区、`HEAD=6085dab` 及其之后的未提交改动。  
 审查范围：源码、CMake、脚本、已有文档、Git 状态、可执行的主机检查和独立 FFmpeg 复核。  

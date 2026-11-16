@@ -1,5 +1,11 @@
 # G0：真实仓库审计（收敛后）
 
+> **历史审计：2026-11-12 单路收敛后基线。**
+>
+> 下文的单路产品入口、MipiPipeline、单模型和删除 RTMP 等描述对应当时快照。现行入口已切换为双路 DualCameraPipeline，另有 VirtualSensor / Software ISP 主机路径；本文件的“当前”不是最新架构说明。
+>
+> 现行依据：[当前架构](../CURRENT_ARCHITECTURE.md) · [执行与验证状态](../CODEX_EXECUTION_STATUS.md)。范围说明更新：2026-11-16（Asia/Shanghai）。
+
 审计日期：2026-11-12（Asia/Shanghai）
 
 ## 结论

@@ -1,6 +1,10 @@
 # RK3588 Camera/ISP 架构收敛与问题修复报告
 
-> 本报告记录早期单路基线审计；最终双路实现、证据矩阵和板端边界以 `docs/CODEX_EXECUTION_STATUS.md`、`docs/SYNC_DESIGN.md` 和 `docs/PIPELINE_AND_OWNERSHIP.md` 为准。
+> **历史报告：2026-11-12 单路架构收敛阶段。**
+>
+> 正文中的“当前”“只定位单路”、MipiPipeline 调用图和测试结果均属于当时基线；后续双路 DualCameraPipeline 与 VirtualSensor / Software ISP 已扩展该结构。保留本报告作为阶段证据，不能用其旧约束、旧线程图或测试状态代替当前实现。
+>
+> 现行依据：[当前架构](CURRENT_ARCHITECTURE.md) · [执行与验证状态](CODEX_EXECUTION_STATUS.md)。范围说明更新：2026-11-16（Asia/Shanghai）。
 
 日期：2026-11-12（Asia/Shanghai）  
 状态：`IMPLEMENTED_AWAITING_HARDWARE`

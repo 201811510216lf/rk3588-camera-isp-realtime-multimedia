@@ -62,6 +62,8 @@ void test_all_bayer_patterns() {
 void test_controls_change_output() {
     isp::IspConfig base;
     base.width = 8; base.height = 8; base.enable_blc = false; base.enable_lsc = false; base.enable_awb = false;
+    // IspConfig defaults to gamma=2.2; use a genuinely linear baseline.
+    base.gamma = 1.0F;
     std::vector<uint16_t> raw(base.width * base.height, 256U);
     isp::RgbImage linear, gamma;
     isp::SoftwareIsp first(base); assert(first.process_raw(raw, &linear));

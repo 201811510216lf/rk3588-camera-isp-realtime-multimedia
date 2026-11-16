@@ -12,7 +12,7 @@ endif()
 set(PROJECT_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
 option(BUILD_HOST_TESTS "Build dependency-free lifecycle and CLI tests" ON)
 option(BUILD_BSP_TOOLS "Build read-only media graph and rkAIQ status tools" ON)
-option(BUILD_RK_DEMO "Build the Rockchip MIPI camera application" ${UNIX})
+option(BUILD_RK_DEMO "Build the Rockchip dual-camera MIPI application" ${UNIX})
 option(REQUIRE_RK_DEMO "Fail configure when RK demo dependencies are missing" OFF)
 option(BUILD_SOFTWARE_DEMO "Build the dependency-light VirtualSensor + Software ISP demo" ON)
 option(ENABLE_ASAN_UBSAN "Enable AddressSanitizer and UndefinedBehaviorSanitizer for host targets" OFF)
@@ -99,7 +99,7 @@ if(BUILD_HOST_TESTS)
         add_test(NAME project_structure_validation
                  COMMAND ${Python3_EXECUTABLE} ${PROJECT_ROOT}/tests/validate_project.py)
         add_test(NAME isp_quality_analyzer_test
-                 COMMAND ${Python3_EXECUTABLE} -m unittest discover -s ${PROJECT_ROOT}/tests -p "test_isp_quality_analyzer.py")
+                 COMMAND ${Python3_EXECUTABLE} -m unittest discover -s ${PROJECT_ROOT}/tests -p "*isp_quality_analyzer*.py")
     endif()
 endif()
 
@@ -121,8 +121,8 @@ if(BUILD_BSP_TOOLS)
 endif()
 
 if(BUILD_RK_DEMO AND UNIX)
-    # These are the only vendor dependencies of the single MIPI path. The old
-    # FFmpeg decoder/RTMP stack is intentionally absent from this target.
+    # These are the only vendor dependencies of the dual-camera MIPI path. The old
+    # FFmpeg decoder/legacy streaming libraries are absent; output sinks use ffmpeg subprocesses.
     set(RKNN_API_PATH ${PROJECT_ROOT}/../rknn CACHE PATH "RKNN SDK root")
     set(MPP_PATH      ${PROJECT_ROOT}/../mpp CACHE PATH "MPP SDK root")
     set(RGA_PATH      ${PROJECT_ROOT}/../rga CACHE PATH "RGA SDK root")

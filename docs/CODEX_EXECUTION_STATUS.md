@@ -1,30 +1,33 @@
-# E0-E6 执行状态
+# 当前执行状态与证据
 
-证据等级：`SOURCE_IMPLEMENTED`、`HOST_BUILT`、`HOST_TESTED`、`TARGET_BUILT`、`BOARD_TESTED`、`MEASURED` 分开记录。
+核对日期：2026-11-16（Asia/Shanghai）；审查基线为 `ab50e37`，本轮最终变更见 Git 提交差异。当前架构以 [CURRENT_ARCHITECTURE.md](CURRENT_ARCHITECTURE.md) 和 CMake 目标清单为准。
 
-| 阶段 | 源码 | 主机 | 目标/板端 | 记录 |
-|---|---|---|---|---|
-| E0 审计/基线 | `SOURCE_IMPLEMENTED` | 结构脚本可运行；CMake/C++ 编译器缺失 | `NOT_MEASURED` | 清理旧四路业务依赖，保留 V4L2/MPP/RGA/RKNN |
-| E1 正确性 | `SOURCE_IMPLEMENTED` | `NOT_MEASURED`；无 C++ toolchain | `NOT_MEASURED` | lease、plane/offset、FramePairer、packet PTS 校验和错误传播 |
-| E2 双路/配帧/拼接 | `SOURCE_IMPLEMENTED` | synthetic tests present, `NOT_MEASURED` build | `NOT_MEASURED` | 两路独立 capture、时间戳匹配、左右 layout |
-| E3 BSP/ISP | `SOURCE_IMPLEMENTED`（只读 validator + fail-closed rkAIQ adapter） | Python 静态检查通过 | `AWAITING_BSP_EVIDENCE` | 未猜 Sensor、I2C、GPIO、DTS、IQ 或厂商 API |
-| E4 AI/OSD | `SOURCE_IMPLEMENTED` | `NOT_MEASURED` | `NOT_MEASURED` | 两个 context、camera_id/timestamp 关联、过期结果不画；当前 RKNN wrapper 没有已确认的 core-mask API，参数会明确告警并使用 SDK 默认调度 |
-| E5 RTMP/MP4 | `SOURCE_IMPLEMENTED`（单编码包 fan-out + ffmpeg pipes） | `NOT_MEASURED` | `AWAITING_SERVER_AND_BOARD` | 需真实 ffmpeg、服务器、ffprobe/播放器 |
-| E6 测量/优化 | `SOURCE_IMPLEMENTED` 工具和统计字段 | `NOT_MEASURED` | `NOT_MEASURED` | 无 RK3588/BSP/设备，所有 FPS/同步/延迟填 NOT_MEASURED |
+## 已执行的证据
 
-本次未执行的项目不是“通过”：CMake configure/build、CTest、Linux V4L2、MPP/RGA/RKNN、RTMP、MP4 播放、Sensor 硬件同步、长稳和真实曝光测量均需目标环境。
+以下命令在用户后续提出“不用运行测试”之前执行。此后没有继续构建或测试；修正后的最终快照未复验，不宣称全绿。
 
-## 当前环境命令证据
+| 检查 | 实际结果 | 适用范围 |
+|---|---|---|
+| `python tests/validate_project.py` | PASS，基线检查 36 个所需文件 | 文件/关键字结构检查，不证明编译或行为正确 |
+| `python -m unittest discover -s tests -p '*isp_quality_analyzer*.py'` | 9 项通过 | Python RAW/质量分析工具 |
+| CMake configure + MSVC Debug build | 成功 | `BUILD_RK_DEMO=OFF`，软件库、demo、BSP 工具和主机测试可编译 |
+| `ctest --test-dir build-review-msvc -C Debug --output-on-failure` | 10/11 项通过；`software_isp_test` 失败 | `linear.data != gamma.data` 断言，原 `tests/software_isp_test.cpp:69`；该测试两次都使用默认 gamma=2.2，本轮将线性基线设为 1.0，保留差异断言；未复验 |
+| 本轮最终变更 | 代码差异审查；未再构建/测试 | 按用户要求保留未复验状态 |
+| 真实 Linux/RK3588、厂商 SDK、Sensor/模型/服务器 | `NOT_VERIFIED` | 未执行目标构建、硬件同步、MPP/RGA/RKNN、rkAIQ、端到端推流和长稳 |
 
-- `python tests/validate_project.py` → exit 0，`PASS (32 required files)`。
-- `python -m compileall -q tests scripts` → exit 0。
-- `git diff --check` → exit 0。
-- `python scripts/analyze_isp_samples.py` 对 synthetic 4×4 NV12 → exit 0，亮度统计正确，曝光/增益/时间戳明确为 `NOT_MEASURED`。
-- `cmake -S . -B build-host ...` → exit 1：当前 PATH 没有 `cmake`；因此 C++/CTest 未宣称通过。
+环境发现：CMake/CTest/MSVC 已随 Visual Studio 2022 安装，但不在原 PATH。使用安装目录的 CMake、Visual Studio 17 2022 x64 generator、Debug 配置构建到忽略目录 `build-review-msvc`，保留 assert。原生 Windows 不编译 `myDemo`。已登记的 WSL Ubuntu 因 VHD 路径不存在而未能启动，没有 Linux 构建证据。
 
-## 四项独立结论
+## 能力边界
 
-- `SOURCE_IMPLEMENTATION`: `IMPLEMENTED`（双路用户态主链路、FramePairer、OSD/Compose、单 MPP 包分发、只读 ISP/rkAIQ 适配已落地）。
-- `BUILD_TEST_STATUS`: `HOST_STATIC_TESTS_PASS / CXX_BUILD_NOT_EXECUTED`。
-- `HARDWARE_SYNC_STATUS`: `NOT_VERIFIED`；`hardware` 模式 fail-fast。
-- `END_TO_END_BOARD_STATUS`: `AWAITING_HARDWARE_AND_SERVER`。
+| 能力 | 源码状态 | 验证边界 |
+|---|---|---|
+| 双路 V4L2 → FramePairer → Compose → 单 MPP 编码 | 已接当前 `main` 和 `myDemo` 清单 | 未目标构建/板测 |
+| 目标 RKNN、RGA、RTMP/MP4 | 有实现路径 | 缺实际 SDK/模型/服务器运行证据；同步 sink 存在阻塞风险 |
+| 硬件曝光同步 | 未实现触发后端 | `hardware` 模式 fail-fast；时间戳配帧不能证明同时曝光 |
+| NPU 核参数 | 修正为每路传入配置，-1 使用 SDK AUTO、0/1/2 显式绑核 | 仅源码审查，未目标构建/板测 |
+| 真实 rkAIQ/IQ/硬件 AE/AWB | 未接入，fail-closed | 与 Software ISP 的软件 AE/AWB 分开 |
+| VirtualSensor/RAW10/Software ISP/AE/profile/Demo AI | 主机实现，基线 Debug 编译成功 | 首轮 CTest 有一项失败；最终修正未复验 |
+| 双路软件 demo | 串行虚拟处理、元数据配帧统计、首帧拼接样例 | 未实现配对帧驱动的完整逐帧视频输出 |
+| `reports/isp` 的辅助图像/JSON | Python 合成样例 | 不能证明 C++ AE/AWB 收敛、帧率或板端成像质量 |
+
+本轮发现、修正和剩余问题见 [代码差异审查](CODE_RECONCILIATION_2026-11-16.md)。历史报告中的“无编译器”“C++ 未执行”、固定测试数量和旧 Git 状态仅描述当时环境。

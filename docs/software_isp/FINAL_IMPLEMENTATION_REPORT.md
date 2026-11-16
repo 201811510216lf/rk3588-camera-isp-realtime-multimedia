@@ -1,5 +1,7 @@
 # Round 6 Final Implementation Report
 
+> Historical Round 6 implementation snapshot. Later source corrections, installed toolchain discovery and actual verification results are recorded in [CURRENT_ARCHITECTURE.md](../CURRENT_ARCHITECTURE.md) and [CODEX_EXECUTION_STATUS.md](../CODEX_EXECUTION_STATUS.md). The original build/test and environment claims below apply only to that round; software features do not prove RKISP/rkAIQ hardware operation.
+
 ## 1. Scope and evidence
 
 The repository root for this round is `demo_multhread_decode_infer_mulmodel/`. The implementation is software-first and uses `IMX415_SIM` as a clearly labelled virtual source. No IMX415 module, RK3588 board, BSP, rkAIQ SDK, IQ file, RKNN model or RTMP server was available in the current environment.

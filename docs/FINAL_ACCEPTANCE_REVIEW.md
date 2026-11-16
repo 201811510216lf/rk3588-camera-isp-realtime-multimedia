@@ -1,5 +1,11 @@
 # RK3588 Camera 项目第三轮严格验收报告
 
+> **历史验收：2026-11-12 第三轮单路基线及文末双路补充。**
+>
+> 正文保留当时的单路收敛、旧提交号、问题计数和命令结果，文末补充记录后续双路变化。历史“当前”“最终”和问题关闭状态均不是最新验收结论；当前已使用 DualCameraPipeline，并增加独立的 VirtualSensor / Software ISP 主机路径。
+>
+> 现行依据：[当前架构](CURRENT_ARCHITECTURE.md) · [执行与验证状态](CODEX_EXECUTION_STATUS.md)。范围说明更新：2026-11-16（Asia/Shanghai）。
+
 审查日期：2026-11-12（Asia/Shanghai）  
 审查对象：`demo_multhread_decode_infer_mulmodel`（嵌套 Git 仓库，`main`，HEAD `6085dab`）  
 审查范围：只读源码、Git 历史、可执行静态检查、构建工具可用性和已有测试；本次没有修改业务源码、构建逻辑或测试用例。

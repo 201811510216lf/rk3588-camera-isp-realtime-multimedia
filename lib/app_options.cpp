@@ -73,7 +73,7 @@ void print_app_help(const char *program_name) {
               << "  --sync-mode software|hardware --sync-tolerance-ms N --sync-max-wait-ms N\n"
               << "  --sync-policy drop-older|hold-last\n"
               << "  --ai-mode off|async|strict --model PATH [--model0 PATH --model1 PATH]\n"
-              << "  --npu-core0 N --npu-core1 N --ai-fps N\n"
+              << "  --npu-core0 N --npu-core1 N (-1=auto, 0/1/2=core) --ai-fps N\n"
               << "  --rtmp-url URL --record --no-record --no-stream --output-dir DIR --segment-sec N\n"
               << "  --output PATH --events PATH --sync-diagnostics PATH --duration-sec N\n"
               << "  --device PATH --width N --height N  legacy aliases for camera0/input size\n"
@@ -167,6 +167,9 @@ bool parse_app_options(int argc, char **argv, AppOptions *options, bool *show_he
         *error = "unknown option: " + arg; return false;
     }
     if (!error->empty()) return false;
+    if (options->npu_core0 < -1 || options->npu_core0 > 2 || options->npu_core1 < -1 || options->npu_core1 > 2) {
+        *error = "NPU core must be -1 (auto), 0, 1 or 2"; return false;
+    }
     if (options->width == 0 || options->height == 0 || options->output_width == 0 || options->output_height == 0 || options->fps == 0 || options->bitrate == 0 || options->v4l2_timeout_ms == 0 || options->sync_max_wait_ms == 0) {
         *error = "input/output dimensions, fps, bitrate, timeout and sync wait must be greater than zero"; return false;
     }

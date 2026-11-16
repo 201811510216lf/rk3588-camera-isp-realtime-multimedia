@@ -432,8 +432,23 @@ bool DualCameraPipeline::run(std::string *error) {
     if (p.rtmp_sink) (void)p.rtmp_sink->write(header.data(), static_cast<size_t>(header_size));
     if (p.mp4_sink) (void)p.mp4_sink->write(header.data(), static_cast<size_t>(header_size));
     if (p.raw_output.is_open() && !p.raw_output.good()) { if (error) *error = "H.264 SPS/PPS header write failed"; return false; }
-    if (p.config.ai_mode != AppOptions::AiMode::Off) { const std::string paths[2] = {p.config.model0_path, p.config.model1_path}; for (int i = 0; i < 2; ++i) { if (!paths[i].empty()) p.models[i] = std::make_unique<rknn_lite>(paths[i].c_str(), 0, 1, i); if (!p.models[i] || !p.models[i]->valid()) { p.models[i].reset(); if (p.config.ai_required) { if (error) *error = "RKNN model initialization failed for camera" + std::to_string(i); return false; } std::cerr << "camera" << i << " AI disabled: model unavailable\n"; } } }
-    if (p.config.npu_core0 >= 0 || p.config.npu_core1 >= 0) std::cerr << "NPU core masks requested, but this repository's identified RKNN wrapper exposes no verified core-mask API; contexts remain independent with SDK default scheduling\n";
+    if (p.config.ai_mode != AppOptions::AiMode::Off) {
+        const std::string paths[2] = {p.config.model0_path, p.config.model1_path};
+        const int cores[2] = {p.config.npu_core0, p.config.npu_core1};
+        for (int i = 0; i < 2; ++i) {
+            if (!paths[i].empty()) {
+                p.models[i] = std::make_unique<rknn_lite>(paths[i].c_str(), cores[i], 1, i);
+            }
+            if (!p.models[i] || !p.models[i]->valid()) {
+                p.models[i].reset();
+                if (p.config.ai_required) {
+                    if (error) *error = "RKNN model initialization failed for camera" + std::to_string(i);
+                    return false;
+                }
+                std::cerr << "camera" << i << " AI disabled: model unavailable\n";
+            }
+        }
+    }
     if (!p.config.events_path.empty()) p.events.open(p.config.events_path, std::ios::out | std::ios::trunc);
     if (!p.config.sync_diagnostics_path.empty()) {
         p.sync_diag.open(p.config.sync_diagnostics_path, std::ios::out | std::ios::trunc);

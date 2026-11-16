@@ -1,5 +1,11 @@
 # 第五轮 IMX415 / RK3588 严格代码审查报告
 
+> **历史审查：2026-11-13 第五轮 IMX415 / RK3588 快照。**
+>
+> 本报告先于第六轮 VirtualSensor / Software ISP 实现。正文中的“AE/AWB 未实现”及旧缺陷状态属于当时范围，不应覆盖现有软件 AE/AWB；真实 IMX415、RKISP/rkAIQ 和同步曝光仍须单独提供板端证据。旧提交号、未提交文件统计和行号均作为历史记录保留。
+>
+> 现行依据：[当前架构](../CURRENT_ARCHITECTURE.md) · [执行与验证状态](../CODEX_EXECUTION_STATUS.md)。范围说明更新：2026-11-16（Asia/Shanghai）。
+
 审查日期：2026-11-13（Asia/Shanghai）  
 审查范围：当前工作树 `demo_multhread_decode_infer_mulmodel` 及其 Git 历史  
 审查约束：本轮只读源码、Git、静态检查、主机测试和构建配置；本报告是本轮唯一新增交付物，未修改业务源码、驱动、DTS 或现有配置。

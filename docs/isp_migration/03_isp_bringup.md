@@ -1,5 +1,11 @@
 # G5：RK3588 Camera/ISP 板端 bring-up
 
+> **历史操作说明：单路 MIPI 阶段。**
+>
+> 下文保留旧 --source/--device/--ai-enable 等示例，不能作为当前双路 myDemo 的操作指令。当前命令及分步验收使用 [README](../../README.md)、[板端验收清单](../BOARD_ACCEPTANCE.md) 和 [BSP / ISP 边界](../BSP_CAMERA_ISP.md)；探测流程本身仍须基于真实板端证据执行。
+>
+> 现行依据：[当前架构](../CURRENT_ARCHITECTURE.md) · [执行与验证状态](../CODEX_EXECUTION_STATUS.md)。范围说明更新：2026-11-16（Asia/Shanghai）。
+
 本文件只描述需要真实板端证据的步骤。工程接收的是 ISP 已处理的 NV12/NV12M 视频节点，不把 RAW Bayer 当作 NV12，也不在没有 BSP 证据时硬编码 `/dev/video0` 或 rkAIQ API。
 
 ## 只读探测

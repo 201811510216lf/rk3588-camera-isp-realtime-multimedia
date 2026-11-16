@@ -14,13 +14,25 @@ def check(condition: bool, message: str) -> None:
 required = [
     "CMakeLists.txt",
     "README.md",
+    "docs/CURRENT_ARCHITECTURE.md",
+    "docs/CODEX_EXECUTION_STATUS.md",
+    "tools/camera_isp_demo.cpp",
+    "include/camera/raw10.h",
+    "include/camera/virtual_sensor.h",
+    "include/isp/isp_pipeline.h",
+    "include/isp/ae_controller.h",
+    "include/ai/inference_backend.h",
+    "lib/camera/raw10.cpp",
+    "lib/camera/virtual_sensor.cpp",
+    "lib/isp/isp_pipeline.cpp",
+    "lib/isp/ae_controller.cpp",
+    "lib/ai/inference_backend.cpp",
     "docs/ARCHITECTURE_REFACTOR_REPORT.md",
     "CODEX_CAMERA_ISP_EXECUTION_PLAN.md",
     "include/app_options.h",
     "include/camera_frame.h",
     "include/bounded_frame_queue.h",
     "include/v4l2_isp_camera.h",
-    "include/mipi_pipeline.h",
     "include/dual_camera_pipeline.h",
     "include/frame_pairer.h",
     "include/composite_processor.h",
@@ -30,7 +42,6 @@ required = [
     "tools/isp_debug_tool.cpp",
     "lib/app_options.cpp",
     "lib/v4l2_isp_camera.cpp",
-    "lib/mipi_pipeline.cpp",
     "lib/dual_camera_pipeline.cpp",
     "lib/frame_pairer.cpp",
     "lib/composite_processor.cpp",
@@ -75,7 +86,7 @@ check("DualCameraPipeline" in main and "camera0" in main and "camera1" in main,
 options = (ROOT / "include/app_options.h").read_text(encoding="utf-8")
 options_impl = (ROOT / "lib/app_options.cpp").read_text(encoding="utf-8")
 check("enum class Source { Mipi };" in options,
-      "app options must expose the single MIPI source")
+      "app options must expose MIPI as the only hardware input type")
 check("--source only supports mipi in this build" in options_impl,
       "CLI must reject removed legacy input mode explicitly")
 check("Usage: " in options_impl and "--source=mipi" in options_impl,
@@ -103,8 +114,7 @@ check("VIDIOC" not in probe and "media-ctl" in probe and "v4l2-ctl" in probe,
       "probe should remain read-only and use board tools")
 check("rm " not in probe and "tee /" not in probe, "probe contains a destructive/write command")
 
-plan = (ROOT / "CODEX_CAMERA_ISP_EXECUTION_PLAN.md").read_text(encoding="utf-8")
-check("当前状态：`IMPLEMENTED_AWAITING_HARDWARE`" in plan, "execution status not updated")
+# The old single-camera plan is a historical record, not current acceptance evidence.
 
 for index in range(1, 14):
     prefix = f"{index:02d}_"

@@ -64,6 +64,11 @@ rknn_lite::rknn_lite(const char *model_name, int n, int class_num, int id)
 {
     this->class_num = class_num;
     this->id = id;
+    if (n < -1 || n > 2)
+    {
+        printf("RKNN core must be -1 (auto), 0, 1 or 2\n");
+        return;
+    }
     /* Create the neural network */
     printf("Loading model id = %d\n", id);
     int model_data_size = 0;
@@ -86,12 +91,12 @@ rknn_lite::rknn_lite(const char *model_name, int n, int class_num, int id)
         printf("rknn_init error ret=%d\n", ret);
         return;
     }
-    rknn_core_mask core_mask;
+    rknn_core_mask core_mask = RKNN_NPU_CORE_AUTO;
     if (n == 0)
         core_mask = RKNN_NPU_CORE_0;
     else if (n == 1)
         core_mask = RKNN_NPU_CORE_1;
-    else
+    else if (n == 2)
         core_mask = RKNN_NPU_CORE_2;
     ret = rknn_set_core_mask(rkModel, core_mask);
     if (ret < 0)

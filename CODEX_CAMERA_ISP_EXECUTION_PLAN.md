@@ -1,5 +1,11 @@
 # RK3588 Camera/ISP 智能相机：Codex 一次性执行计划
 
+> **历史计划：单路 MIPI 收敛阶段（2026-11-12）。**
+>
+> 本计划已由 [双路实施计划](CODEX_DUAL_CAMERA_SYNC_ISP_IMPLEMENTATION.md) 取代。正文保留当时的需求、CLI 和阶段勾选；其中“最终只交付单路”“RTMP 不进入构建”等旧约束不再适用于当前实现，勾选也不表示当前构建或板端验收通过。
+>
+> 现行依据：[当前架构](docs/CURRENT_ARCHITECTURE.md) · [执行与验证状态](docs/CODEX_EXECUTION_STATUS.md)。范围说明更新：2026-11-16（Asia/Shanghai）。
+
 > **用途**：将本文件放在 `demo_multhread_decode_infer_mulmodel` 仓库根目录，交给 Codex 在该仓库中按顺序实施。
 >
 > **首要原则**：这是对当前仓库的最小侵入式收敛，最终只交付单路 MIPI Camera/ISP 录像与单模型 AI 事件识别链路。旧 RTSP/MP4、四模型、四宫格和 RTMP 业务不再进入构建目标。**完成全部可以在当前环境执行的工作才结束**。不得虚构板端、Sensor 或 ISP 的成功验证。

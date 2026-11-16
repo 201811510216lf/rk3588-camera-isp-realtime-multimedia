@@ -14,7 +14,7 @@ Inputs are configured through `VirtualSensorConfig`, `IspConfig`, `AeConfig` and
 
 ## Test method and current result
 
-Run `cmake -S . -B build-host -DBUILD_RK_DEMO=OFF`, `cmake --build build-host`, then `ctest --test-dir build-host --output-on-failure`. The checked-in unit tests cover RAW10, Bayer processing, ISP output, AE/profile behavior, pairing and the demo AI backend. This Windows shell currently has no CMake or C++ compiler, so local build status is `NOT_MEASURED`.
+Run `cmake -S . -B build-host -DBUILD_RK_DEMO=OFF`, `cmake --build build-host`, then `ctest --test-dir build-host --output-on-failure`. The checked-in unit tests cover RAW10, Bayer processing, ISP output, AE/profile behavior, pairing and the demo AI backend. The original Round 6 shell did not expose CMake/C++ tools on PATH. Current host build, review and verification evidence is tracked in [CODEX_EXECUTION_STATUS.md](../CODEX_EXECUTION_STATUS.md); do not infer current test status from this historical environment note.
 
 ## Known limits and interview prompts
 

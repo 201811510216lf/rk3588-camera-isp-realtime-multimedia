@@ -1,58 +1,60 @@
-# RK3588 双路 MIPI RAW / ISP / 同步配帧 / AI 拼接
+# RK3588 双路 Camera 与 Software ISP
 
-当前主链路是：两路真实 Sensor → CSI/RKCIF/RKISP/rkAIQ → 两个独立 V4L2 NV12/NV12M 节点 → `FramePairer` 时间戳匹配 → 每路独立 RKNN context → RGA/CPU 保守转换与 OSD → 左右拼接 → **一个** MPP H.264 Encoder → 同一编码包分发到 RTMP 和分段 MP4。JSONL 只记录事件与诊断。
+当前源码包含两个独立入口。项目已从早期单路 MIPI 方案发展到双路 Camera；旧计划和审查报告保留为阶段记录。
 
-`FramePairer` 只声明软件配帧和内核时间戳近时刻匹配。它不会把同名 FPS、线程启动顺序、NPU 核绑定或 VPU 并行解释成 Sensor 同时曝光。`--sync-mode hardware` 在没有真实 FSIN/Trigger BSP 后端和板端证据时 fail-fast。RTMP/MP4 sink 通过板端可用的 `ffmpeg` 进程消费同一份 H.264 包；没有 ffmpeg 或服务器时会明确失败/记录未验证。
+| 入口 | 当前实现 | 运行条件与边界 |
+|---|---|---|
+| `myDemo`：`main.cpp` → `DualCameraPipeline` | 两路 V4L2 NV12/NV12M → 软件时间戳配帧；两路可选 RKNN → OSD/左右拼接 → 一个 MPP H.264 编码器 → raw H.264、RTMP/分段 MP4 | Linux/RK3588、真实节点、RKNN/MPP/RGA/OpenCV SDK；尚未目标构建或板端验收 |
+| `camera_isp_demo`：`tools/camera_isp_demo.cpp` | VirtualSensor RAW10 → Software ISP → RGB/NV12、软件 AE/AWB、可选 Demo AI、双路元数据配帧和首帧拼接样例 | 独立 C++17 主机模块；模拟输入，不连接真实 rkAIQ/RKISP/RKNN/MPP |
 
-示例命令（节点、服务器、模型路径必须先由板端探测确认）：
+阅读入口：[当前架构与源码索引](docs/CURRENT_ARCHITECTURE.md)、[当前证据与验证状态](docs/CODEX_EXECUTION_STATUS.md)、[本轮代码差异审查](docs/CODE_RECONCILIATION_2026-11-16.md)。`lib/mipi_pipeline.cpp` 是保留的旧单路实现，不在当前 `myDemo` 构建源清单中。历史文档中的“当前”、行号和测试结果只适用于其记录阶段。
+
+## 双路目标程序
+
+下面是目标板配置示例，节点、模型和服务器必须先由实际 BSP/设备确认。图像到达 V4L2 之前的 Sensor/CSI/RKISP/rkAIQ 属于外部板级前置条件；本程序不负责初始化 rkAIQ。
 
 ```bash
 ./build/myDemo --camera0 /dev/videoX --camera1 /dev/videoY \
   --input-width 1920 --input-height 1080 --fps 30 \
   --output-width 1920 --output-height 1080 \
   --sync-mode software --sync-tolerance-ms 5 --sync-max-wait-ms 50 \
-  --sync-policy drop-older --ai-mode async \
-  --model /data/models/behavior.rknn --npu-core0 0 --npu-core1 1 \
+  --sync-policy drop-older --ai-mode async --model /data/models/behavior.rknn \
   --rtmp-url rtmp://SERVER/live/dual-camera \
   --record --output-dir /data/recordings --segment-sec 300 \
   --duration-sec 600 --output /data/dual.h264
 ```
 
-关闭 AI、推流或录像进行分步验收：`--no-ai`、`--no-stream`、`--no-record`。默认输出尺寸是 1920×1080 左右布局；输入比例由 `CompositeProcessor` 做等比例 letterbox，AI 框使用同一映射矩阵。未确认 SDK 的 DMA-BUF import、cache/fence 和异步 MPP completion 前，路径使用 mmap + CPU copy，并将完成语义保持为保守模式。
+AI、推流、分段录像分别可用 `--no-ai`、`--no-stream`、`--no-record` 关闭；这些参数不会把双路入口变为单 Camera 模式。默认输出为 1920×1080 左右 letterbox。`FramePairer` 只做同一时钟域的时间戳配帧；`--sync-mode hardware` 因没有硬件触发后端而直接失败，不能据配帧结果声称同时曝光。
 
-## 构建与测试
+RTMP/MP4 通过外部 `ffmpeg` 子进程消费同一 H.264 包流。分发器同步调用各 sink，慢网络/磁盘会回压编码线程；当前没有每 sink 的独立队列或有界子进程关闭保证。DMA-BUF import、硬件 completion、RKNN 推理、MPP/RGA、断线恢复和长稳均需目标证据。
+
+## 独立 Software ISP 实验
+
+```bash
+./build/camera_isp_demo --sensor virtual --width 640 --height 360 --fps 30 \
+  --duration 3 --format raw10 --enable-ae --output=output/demo --report=output/reports-single
+./build/camera_isp_demo --camera-count 2 --sensor virtual --width 640 --height 360 \
+  --fps 30 --duration 3 --format raw10 --enable-ai --enable-composite \
+  --output=output/dual --report=output/reports-dual
+```
+
+以上为单配置生成器的路径；Visual Studio Debug 构建的程序位于 `build-review-msvc/Debug/`。当前 demo 导出首帧 PPM、可选首帧拼接 NV12 和 JSON 统计，并不导出整段 NV12 视频。双路循环串行处理两台 VirtualSensor，配帧统计与首帧拼接输出仍是分开的演示逻辑。`measured_fps` 是无实时节流的主机吞吐，不能代表实际 Camera FPS。
+
+`reports/isp/` 中由 `scripts/run_round6_reports.py` 生成的曲线和 JSON 是辅助合成数据，不能证明 C++ AE/AWB 收敛或成像质量。Demo AI 是模拟检测；Software ISP 的 YAML profile 不等于 Rockchip IQ。详见 [Software ISP 状态](docs/software_isp/17_IMPLEMENTATION_STATUS.md)。
+
+## 构建与检查说明
+
+主机不需要 RK3588 SDK，示例命令供后续复现：
 
 ```bash
 cmake -S . -B build-host -DBUILD_RK_DEMO=OFF -DBUILD_HOST_TESTS=ON -DBUILD_BSP_TOOLS=ON
-cmake --build build-host -j
-ctest --test-dir build-host --output-on-failure
+cmake --build build-host --config Debug --parallel
+ctest --test-dir build-host -C Debug --output-on-failure
+python -m unittest discover -s tests -p '*isp_quality_analyzer*.py'
 ```
 
-板端或交叉 Linux 构建要求真实 RKNN、MPP、RGA、OpenCV 兄弟目录；使用 `-DREQUIRE_RK_DEMO=ON` 让依赖缺失直接失败。当前 Codex 环境没有 CMake/C++ 编译器、RK3588 设备、BSP checkout、厂商 SDK 或模型，因此本次的 `BOARD_TESTED`、`TARGET_BUILT`、`MEASURED` 证据均为 `NOT_MEASURED`。
+目标板/交叉构建需提供 RKNN、MPP、RGA、OpenCV SDK，并使用 `-DBUILD_RK_DEMO=ON -DREQUIRE_RK_DEMO=ON` 避免依赖缺失时跳过目标。主机编译不包含 `myDemo`，不能证明 Linux/厂商接口可构建。
 
-只读探测和 ISP 实验：
+本轮已找到 Visual Studio 自带的 CMake/MSVC，旧文档中的“PATH 无工具”不等于机器未安装工具。已执行检查和未通过项逐项记录在[状态文档](docs/CODEX_EXECUTION_STATUS.md)；依用户后续要求，修正后的版本仅审查差异，不再运行构建或测试。
 
-```bash
-scripts/isp_probe.sh | tee docs/isp_migration/hardware/isp_probe.log
-./build/media_graph_validator --media-device /dev/media0 --camera0 /dev/videoX --camera1 /dev/videoY --width 1920 --height 1080 --fps 30
-scripts/isp_capture_experiment.sh --device /dev/videoX --frames 120 --out-dir /data/cam0_capture
-python3 scripts/analyze_isp_samples.py --nv12 /data/cam0_capture/<timestamp>_videoX.nv12 --width 1920 --height 1080 > /data/cam0_isp.txt
-python3 scripts/isp_quality_analyzer.py bayer --input /data/cam0.raw10 --width 3840 --height 2160 --packing raw10 --pattern rggb --json
-isp_debug_tool --list
-isp_debug_tool --status --camera 0
-```
-
-IMX415/RK3588 适配证据、DTS 占位模板、RAW10/RAW12 质量分析、IQ 清单和真实性状态见 `docs/isp/01_IMX415_HARDWARE_COMPATIBILITY.md` 至 `docs/isp/13_ISP_IMPLEMENTATION_STATUS.md`。这些文档明确区分源码、主机测试和板端验证；未知板级值不会被伪造。
-
-## Round 6 Software-first ISP
-
-本轮增加了可脱离 RK3588 SDK 运行的 `VirtualSensor`、标准 RAW10 Pack/Unpack、Software ISP、AE/AWB、IQ profile、双路软件配帧和 Demo AI backend。入口是：
-
-```bash
-./build/camera_isp_demo --sensor virtual --width 640 --height 360 --fps 30 --duration 3 --format raw10 --enable-ae --output=output/demo
-./build/camera_isp_demo --camera-count 2 --sensor virtual --width 640 --height 360 --fps 30 --duration 3 --format raw10 --enable-ai --enable-composite --output=output/dual
-```
-
-`camera_isp_demo` 产生 PPM、NV12 和 JSON 质量/性能报告；`scripts/encode_nv12_with_ffmpeg.py` 可在存在 FFmpeg 时将 NV12 转成 H.264/MP4，并把 RTMP 连接结果原样记录。Demo 检测结果标记为 `SIMULATED`，Software ISP 不冒充 RKISP/rkAIQ，CPU 合成不冒充 RGA，主机 FFmpeg 不冒充 MPP。
-
-新增源码、测试和面试文档见 `docs/software_isp/`，完整状态见 `docs/software_isp/FINAL_IMPLEMENTATION_REPORT.md`。
+板端准备与验收见 [BSP/ISP](docs/BSP_CAMERA_ISP.md)、[同步设计](docs/SYNC_DESIGN.md)、[板端验收](docs/BOARD_ACCEPTANCE.md)。
