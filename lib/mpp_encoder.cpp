@@ -14,14 +14,24 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#include <limits.h>
 #include <thread>
 #include <chrono>
+
+namespace {
+
+bool set_encoder_cfg(MppEncCfg cfg, const char *key, int value) {
+    return cfg && mpp_enc_cfg_set_s32(cfg, key, value) == MPP_OK;
+}
+
+} // namespace
 
 MppEncoder::MppEncoder()
     : mpp_ctx_(NULL), mpp_mpi_(NULL), enc_cfg_(NULL),
       frame_(NULL), packet_(NULL), frm_grp_(NULL), pkt_grp_(NULL),
       width_(0), height_(0), fps_(0), bitrate_(0),
       mpp_type_(MPP_VIDEO_CodingAVC), initialized_(false),
+      faulted_(false), pending_frame_(NULL), pending_buffer_(NULL),
       yuv_buffer_(NULL), yuv_buffer_size_(0) {
 }
 
@@ -31,6 +41,12 @@ MppEncoder::~MppEncoder() {
 
 int MppEncoder::Init(int width, int height, int fps, int bitrate, int codec_type) {
     MPP_RET ret = MPP_OK;
+
+    if (width <= 0 || height <= 0 || fps <= 0 || bitrate <= 0) {
+        fprintf(stderr, "Invalid encoder configuration: %dx%d @ %dfps bitrate=%d\n",
+                width, height, fps, bitrate);
+        return -1;
+    }
     
     width_ = width;
     height_ = height;
@@ -77,37 +93,49 @@ int MppEncoder::Init(int width, int height, int fps, int bitrate, int codec_type
     }
 
     // 基本图像参数
-    mpp_enc_cfg_set_s32(enc_cfg_, "prep:width", width);
-    mpp_enc_cfg_set_s32(enc_cfg_, "prep:height", height);
-    mpp_enc_cfg_set_s32(enc_cfg_, "prep:hor_stride", width);
-    mpp_enc_cfg_set_s32(enc_cfg_, "prep:ver_stride", height);
-    mpp_enc_cfg_set_s32(enc_cfg_, "prep:format", MPP_FMT_YUV420P);
+    if (!set_encoder_cfg(enc_cfg_, "prep:width", width) ||
+        !set_encoder_cfg(enc_cfg_, "prep:height", height) ||
+        !set_encoder_cfg(enc_cfg_, "prep:hor_stride", width) ||
+        !set_encoder_cfg(enc_cfg_, "prep:ver_stride", height) ||
+        !set_encoder_cfg(enc_cfg_, "prep:format", MPP_FMT_YUV420P)) {
+        fprintf(stderr, "failed to configure MPP input format\n");
+        goto FAIL;
+    }
 
     // 码率控制：简单的 VBR 设置，偏向速度
-    mpp_enc_cfg_set_s32(enc_cfg_, "rc:mode", MPP_ENC_RC_MODE_VBR);
-    mpp_enc_cfg_set_s32(enc_cfg_, "rc:bps_target", bitrate);
-    mpp_enc_cfg_set_s32(enc_cfg_, "rc:bps_max", bitrate * 2);
-    mpp_enc_cfg_set_s32(enc_cfg_, "rc:bps_min", bitrate / 2);
-    mpp_enc_cfg_set_s32(enc_cfg_, "rc:fps_in_flex", 0);
-    mpp_enc_cfg_set_s32(enc_cfg_, "rc:fps_in_num", fps);
-    mpp_enc_cfg_set_s32(enc_cfg_, "rc:fps_in_denom", 1);
-    mpp_enc_cfg_set_s32(enc_cfg_, "rc:fps_out_flex", 0);
-    mpp_enc_cfg_set_s32(enc_cfg_, "rc:fps_out_num", fps);
-    mpp_enc_cfg_set_s32(enc_cfg_, "rc:fps_out_denom", 1);
-    mpp_enc_cfg_set_s32(enc_cfg_, "rc:gop", fps);
+    if (!set_encoder_cfg(enc_cfg_, "rc:mode", MPP_ENC_RC_MODE_VBR) ||
+        !set_encoder_cfg(enc_cfg_, "rc:bps_target", bitrate) ||
+        !set_encoder_cfg(enc_cfg_, "rc:bps_max", bitrate * 2) ||
+        !set_encoder_cfg(enc_cfg_, "rc:bps_min", bitrate / 2) ||
+        !set_encoder_cfg(enc_cfg_, "rc:fps_in_flex", 0) ||
+        !set_encoder_cfg(enc_cfg_, "rc:fps_in_num", fps) ||
+        !set_encoder_cfg(enc_cfg_, "rc:fps_in_denom", 1) ||
+        !set_encoder_cfg(enc_cfg_, "rc:fps_out_flex", 0) ||
+        !set_encoder_cfg(enc_cfg_, "rc:fps_out_num", fps) ||
+        !set_encoder_cfg(enc_cfg_, "rc:fps_out_denom", 1) ||
+        !set_encoder_cfg(enc_cfg_, "rc:gop", fps)) {
+        fprintf(stderr, "failed to configure MPP rate control\n");
+        goto FAIL;
+    }
 
     if (mpp_type_ == MPP_VIDEO_CodingAVC) {
-        mpp_enc_cfg_set_s32(enc_cfg_, "codec:type", MPP_VIDEO_CodingAVC);
-        mpp_enc_cfg_set_s32(enc_cfg_, "h264:profile", 66);
-        mpp_enc_cfg_set_s32(enc_cfg_, "h264:level", 40);
-        mpp_enc_cfg_set_s32(enc_cfg_, "h264:cabac_en", 0);
-        mpp_enc_cfg_set_s32(enc_cfg_, "h264:qp_init", 26);
-        mpp_enc_cfg_set_s32(enc_cfg_, "h264:qp_min", 20);
-        mpp_enc_cfg_set_s32(enc_cfg_, "h264:qp_max", 35);
+        if (!set_encoder_cfg(enc_cfg_, "codec:type", MPP_VIDEO_CodingAVC) ||
+            !set_encoder_cfg(enc_cfg_, "h264:profile", 66) ||
+            !set_encoder_cfg(enc_cfg_, "h264:level", 40) ||
+            !set_encoder_cfg(enc_cfg_, "h264:cabac_en", 0) ||
+            !set_encoder_cfg(enc_cfg_, "h264:qp_init", 26) ||
+            !set_encoder_cfg(enc_cfg_, "h264:qp_min", 20) ||
+            !set_encoder_cfg(enc_cfg_, "h264:qp_max", 35)) {
+            fprintf(stderr, "failed to configure H.264 parameters\n");
+            goto FAIL;
+        }
     } else if (mpp_type_ == MPP_VIDEO_CodingHEVC) {
-        mpp_enc_cfg_set_s32(enc_cfg_, "codec:type", MPP_VIDEO_CodingHEVC);
-        mpp_enc_cfg_set_s32(enc_cfg_, "h265:profile", 1);
-        mpp_enc_cfg_set_s32(enc_cfg_, "h265:level", 120);
+        if (!set_encoder_cfg(enc_cfg_, "codec:type", MPP_VIDEO_CodingHEVC) ||
+            !set_encoder_cfg(enc_cfg_, "h265:profile", 1) ||
+            !set_encoder_cfg(enc_cfg_, "h265:level", 120)) {
+            fprintf(stderr, "failed to configure H.265 parameters\n");
+            goto FAIL;
+        }
     }
 
     // 应用配置
@@ -139,6 +167,7 @@ int MppEncoder::Init(int width, int height, int fps, int bitrate, int codec_type
     }
 
     initialized_ = true;
+    faulted_ = false;
     return 0;
 
 FAIL:
@@ -219,14 +248,16 @@ int MppEncoder::EncodeFrameDma(void* bgr_va, int width, int height,
 int MppEncoder::EncodeNV12(const uint8_t* nv12_data, int width, int height,
                            int stride_y, int stride_uv, int data_size,
                            uint8_t* packet_data, int* packet_size) {
-    if (!initialized_ || !nv12_data || !packet_size || width != width_ || height != height_) {
+    if (!initialized_ || faulted_ || !nv12_data || !packet_data || !packet_size ||
+        *packet_size <= 0 || width != width_ || height != height_) {
         fprintf(stderr, "Invalid NV12 frame or encoder is not initialized\n");
         return -1;
     }
     if (stride_y <= 0) stride_y = width;
     if (stride_uv <= 0) stride_uv = stride_y;
-    const int required = stride_y * height + stride_uv * (height / 2);
-    if (data_size > 0 && data_size < required) {
+    const size_t required = static_cast<size_t>(stride_y) * static_cast<size_t>(height) +
+                            static_cast<size_t>(stride_uv) * static_cast<size_t>(height / 2);
+    if (data_size <= 0 || static_cast<size_t>(data_size) < required) {
         fprintf(stderr, "NV12 frame is smaller than its negotiated stride layout\n");
         return -1;
     }
@@ -276,9 +307,32 @@ int MppEncoder::EncodeNV12(const uint8_t* nv12_data, int width, int height,
     return Encode(yuv_buffer_, width * height * 3 / 2, packet_data, packet_size);
 }
 
+bool MppEncoder::reset_and_release_pending() {
+    if (!pending_frame_ && !pending_buffer_) {
+        return true;
+    }
+    // The BSP's timeout/error completion contract is not available in this
+    // host tree. Do not guess that reset() has stopped hardware access. Keep
+    // the pending buffer until Release() tears down the MPP context, which is
+    // the only ownership boundary this wrapper can enforce without a BSP
+    // specific completion callback.
+    return false;
+}
+
 int MppEncoder::Encode(uint8_t* yuv_data, int yuv_size, uint8_t* packet_data, int* packet_size) {
-    if (!initialized_) {
+    if (!initialized_ || faulted_) {
         fprintf(stderr, "Encoder not initialized\n");
+        return -1;
+    }
+    if (!yuv_data || yuv_size <= 0 || !packet_size || !packet_data || *packet_size <= 0) {
+        fprintf(stderr, "Invalid encoder input or packet buffer\n");
+        return -1;
+    }
+
+    const size_t expected_yuv_size = static_cast<size_t>(width_) *
+                                     static_cast<size_t>(height_) * 3U / 2U;
+    if (static_cast<size_t>(yuv_size) > expected_yuv_size) {
+        fprintf(stderr, "YUV input exceeds configured frame size\n");
         return -1;
     }
 
@@ -293,8 +347,8 @@ int MppEncoder::Encode(uint8_t* yuv_data, int yuv_size, uint8_t* packet_data, in
         return -1;
     }
 
-    int buf_size = width_ * height_ * 3 / 2;
-    ret = mpp_buffer_get(frm_grp_, &buffer, buf_size);
+    const size_t buf_size = expected_yuv_size;
+    ret = mpp_buffer_get(frm_grp_, &buffer, static_cast<size_t>(buf_size));
     if (ret != MPP_OK) {
         fprintf(stderr, "failed to get buffer for input frame ret %d\n", ret);
         mpp_frame_deinit(&frame);
@@ -321,10 +375,16 @@ int MppEncoder::Encode(uint8_t* yuv_data, int yuv_size, uint8_t* packet_data, in
     ret = mpp_mpi_->encode_put_frame(mpp_ctx_, frame);
     if (ret != MPP_OK) {
         fprintf(stderr, "encode_put_frame failed ret %d\n", ret);
-        mpp_buffer_put(buffer);
         mpp_frame_deinit(&frame);
+        mpp_buffer_put(buffer);
         return -1;
     }
+
+    // The official MPP encode_put_frame/get_packet flow releases the frame
+    // wrapper immediately after submission. The buffer handle remains owned
+    // here until a packet is received or the reset path establishes a
+    // completion boundary.
+    mpp_frame_deinit(&frame);
 
     // 轮询获取编码输出，避免帧在编码器内堆积导致后续卡顿
     const int max_retries = 50;
@@ -333,26 +393,30 @@ int MppEncoder::Encode(uint8_t* yuv_data, int yuv_size, uint8_t* packet_data, in
         if (ret == MPP_OK && packet) {
             break;
         }
-        if (ret != MPP_ERR_TIMEOUT) {
-            *packet_size = 0;
-            mpp_buffer_put(buffer);
-            mpp_frame_deinit(&frame);
-            return 0;
-        }
+        if (ret != MPP_ERR_TIMEOUT) break;
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     if (ret != MPP_OK || !packet) {
+        // encode_put_frame transferred the frame to MPP. On timeout and on
+        // non-timeout errors the API does not prove that the hardware has
+        // stopped reading it. Retain the buffer until Release tears down the
+        // MPP context, and report an error instead of silently dropping it.
+        pending_buffer_ = buffer;
+        buffer = NULL;
+        faulted_ = true;
+        if (!reset_and_release_pending()) {
+            fprintf(stderr, "MPP completion is unverified; retaining pending input until Release\n");
+        }
         *packet_size = 0;
-        mpp_buffer_put(buffer);
-        mpp_frame_deinit(&frame);
-        return 0;
+        return (ret == MPP_ERR_TIMEOUT) ? -2 : -3;
     }
 
     void* pkt_data = mpp_packet_get_data(packet);
     size_t pkt_size = mpp_packet_get_length(packet);
 
     if (pkt_data && pkt_size > 0) {
-        if (packet_data && *packet_size >= (int)pkt_size) {
+        if (pkt_size <= static_cast<size_t>(INT_MAX) && packet_data &&
+            *packet_size >= static_cast<int>(pkt_size)) {
             memcpy(packet_data, pkt_data, pkt_size);
             *packet_size = pkt_size;
         } else {
@@ -374,7 +438,7 @@ int MppEncoder::Encode(uint8_t* yuv_data, int yuv_size, uint8_t* packet_data, in
 }
 
 int MppEncoder::GetHeader(uint8_t* header_data, int* header_size) {
-    if (!initialized_) {
+    if (!initialized_ || faulted_ || !header_data || !header_size || *header_size <= 0) {
         fprintf(stderr, "Encoder not initialized\n");
         return -1;
     }
@@ -411,6 +475,27 @@ int MppEncoder::GetHeader(uint8_t* header_data, int* header_size) {
 }
 
 void MppEncoder::Release() {
+    if (pending_frame_ || pending_buffer_) {
+        if (!reset_and_release_pending()) {
+            // Destroying the MPP context is the final completion boundary
+            // available to this wrapper when no BSP completion callback is
+            // available. The pending buffer is released only afterwards.
+            // Do not return the buffer to its group before the context is
+            // destroyed.
+            if (mpp_ctx_) {
+                mpp_destroy(mpp_ctx_);
+                mpp_ctx_ = NULL;
+            }
+            mpp_mpi_ = NULL;
+            if (pending_frame_) {
+                mpp_frame_deinit(&pending_frame_);
+            }
+            if (pending_buffer_) {
+                mpp_buffer_put(pending_buffer_);
+                pending_buffer_ = NULL;
+            }
+        }
+    }
     if (enc_cfg_) {
         mpp_enc_cfg_deinit(enc_cfg_);
         enc_cfg_ = NULL;
@@ -430,6 +515,7 @@ void MppEncoder::Release() {
         mpp_destroy(mpp_ctx_);
         mpp_ctx_ = NULL;
     }
+    mpp_mpi_ = NULL;
 
     if (yuv_buffer_) {
         free(yuv_buffer_);
@@ -438,5 +524,6 @@ void MppEncoder::Release() {
     }
 
     initialized_ = false;
+    faulted_ = false;
 }
 

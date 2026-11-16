@@ -1,0 +1,21 @@
+# IQ tuning
+
+## Principle
+
+A dependency-free YAML subset stores software ISP parameters and supports apply/rollback. It is not a Rockchip IQ file.
+
+## Source and flow
+
+`isp/isp_profile.h; configs/isp/imx415_1080p.yaml`
+
+## Parameters and I/O
+
+Inputs are configured through `VirtualSensorConfig`, `IspConfig`, `AeConfig` and the demo command line. Outputs are typed RGB888/NV12 frames, statistics and JSON reports. Bounds and buffer sizes are checked at module boundaries.
+
+## Test method and current result
+
+Run `cmake -S . -B build-host -DBUILD_RK_DEMO=OFF`, `cmake --build build-host`, then `ctest --test-dir build-host --output-on-failure`. The checked-in unit tests cover RAW10, Bayer processing, ISP output, AE/profile behavior, pairing and the demo AI backend. This Windows shell currently has no CMake or C++ compiler, so local build status is `NOT_MEASURED`.
+
+## Known limits and interview prompts
+
+The implementation is a host Software ISP and does not claim RKISP, rkAIQ, RGA, MPP, hardware synchronized exposure or RKNN model accuracy. Explain why each hardware boundary needs board evidence, how RAW10 MSBs are packed, how AE avoids oscillation, and how leases/queues bound shutdown.

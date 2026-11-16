@@ -49,6 +49,7 @@ public:
     V4L2IspCamera &operator=(const V4L2IspCamera &) = delete;
 
     bool open(std::string *error = nullptr);
+    bool set_config(Config config, std::string *error = nullptr);
     bool start(std::string *error = nullptr);
     std::optional<camera::CameraFrame> dequeue(std::string *error = nullptr);
     bool stop(std::string *error = nullptr);

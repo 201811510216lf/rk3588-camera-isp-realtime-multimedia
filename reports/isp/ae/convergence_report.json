@@ -1,0 +1,22 @@
+{
+  "simulated": true,
+  "target_luma": 110,
+  "mean_luma": [
+    24,
+    45,
+    76,
+    103,
+    111,
+    113
+  ],
+  "exposure_us": [
+    10000,
+    18000,
+    25000,
+    30000,
+    30000,
+    30000
+  ],
+  "converged": true,
+  "convergence_frame": 5
+}

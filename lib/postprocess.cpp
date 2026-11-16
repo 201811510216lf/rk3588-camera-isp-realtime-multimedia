@@ -97,7 +97,11 @@ int readLines(const char *fileName, char *lines[], int max_line)
 int loadLabelName(const char *locationFilename, char *label[], int class_num)
 {
     printf("loadLabelName %s\n", locationFilename);
-    readLines(locationFilename, label, class_num);
+    // The legacy storage is intentionally bounded to the ten labels it
+    // allocates.  Never let a model-provided class count write past it.
+    const int bounded_class_num = class_num < 10 ? class_num : 10;
+    if (bounded_class_num <= 0) return -1;
+    if (readLines(locationFilename, label, bounded_class_num) < 0) return -1;
     return 0;
 }
 
@@ -116,7 +120,7 @@ static int nms(int validCount, std::vector<float> &outputLocations, std::vector<
 {
     for (int i = 0; i < validCount; ++i)
     {
-        if (order[i] == -1 || classIds[i] != filterId)
+        if (order[i] == -1 || classIds[order[i]] != filterId)
         {
             continue;
         }
@@ -124,7 +128,7 @@ static int nms(int validCount, std::vector<float> &outputLocations, std::vector<
         for (int j = i + 1; j < validCount; ++j)
         {
             int m = order[j];
-            if (m == -1 || classIds[i] != filterId)
+            if (m == -1 || classIds[m] != filterId)
             {
                 continue;
             }
@@ -284,13 +288,17 @@ int post_process(int8_t *input0, int8_t *input1, int8_t *input2, int model_in_h,
                  float nms_threshold, float scale_w, float scale_h, std::vector<int32_t> &qnt_zps,
                  std::vector<float> &qnt_scales, detect_result_group_t *group, int class_num)
 {
+    if (!input0 || !input1 || !input2 || !group || model_in_h <= 0 || model_in_w <= 0 ||
+        class_num <= 0 || scale_w <= 0.0F || scale_h <= 0.0F || qnt_zps.size() < 3 ||
+        qnt_scales.size() < 3) {
+        return -1;
+    }
     static int init = -1;
     if (init == -1)
     {
         int ret = 0;
-        // Load a stable label table once. Different legacy models may expose
-        // different class counts; loading only the first model's count made
-        // later class IDs silently become empty labels.
+        // Load a stable label table once. The single configured model may
+        // expose a different class count, so unknown IDs remain diagnosable.
         ret = loadLabelName(LABEL_NALE_TXT_PATH, labels, 10);
         if (ret < 0)
         {
@@ -373,6 +381,8 @@ int post_process(int8_t *input0, int8_t *input1, int8_t *input2, int model_in_h,
 
         // 获取当前目标的类别 ID 和置信度
         int id = classId[n];
+        // objProbs is sorted together with indexArray. `i` is the sorted
+        // confidence position while `n` indexes the original box arrays.
         float obj_conf = objProbs[i];
 
         // 将检测结果的坐标转换为原始图像的坐标并存储在结果数组中
@@ -380,9 +390,10 @@ int post_process(int8_t *input0, int8_t *input1, int8_t *input2, int model_in_h,
         group->results[last_count].box.top = (int)(clamp(y1, 0, model_in_h) / scale_h);    // 限制上边界值并进行比例缩放
         group->results[last_count].box.right = (int)(clamp(x2, 0, model_in_w) / scale_w);  // 限制右边界值并进行比例缩放
         group->results[last_count].box.bottom = (int)(clamp(y2, 0, model_in_h) / scale_h); // 限制下边界值并进行比例缩放
+        group->results[last_count].prop = obj_conf;
 
 
-        const char *label = (id >= 0 && id < class_num && labels[id]) ? labels[id] : "";
+        const char *label = (id >= 0 && id < class_num && id < 10 && labels[id]) ? labels[id] : "";
         strncpy(group->results[last_count].name, label, OBJ_NAME_MAX_SIZE);
         group->results[last_count].name[OBJ_NAME_MAX_SIZE - 1] = '\0';
 

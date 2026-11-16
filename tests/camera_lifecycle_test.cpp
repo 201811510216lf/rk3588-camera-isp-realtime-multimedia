@@ -77,11 +77,21 @@ void test_cli_validation() {
 
     const char *bad_args[] = {"myDemo", "--source=bad"};
     assert(!parse_app_options(2, const_cast<char **>(bad_args), &options, &help, &error));
-    assert(error.find("legacy or mipi") != std::string::npos);
+    assert(error.find("only supports mipi") != std::string::npos);
 
     const char *raw_mp4_args[] = {"myDemo", "--source=mipi", "--output=x.mp4"};
     assert(!parse_app_options(3, const_cast<char **>(raw_mp4_args), &options, &help, &error));
     assert(error.find("raw H.264") != std::string::npos);
+
+    const char *dual_args[] = {"myDemo", "--camera0", "/dev/video10", "--camera1", "/dev/video11",
+                               "--input-width", "1280", "--input-height", "720", "--output-width", "1280",
+                               "--output-height", "720", "--sync-mode", "software", "--ai-mode", "async",
+                               "--model", "model.rknn", "--rtmp-url", "rtmp://example/live/x", "--record"};
+    assert(parse_app_options(static_cast<int>(sizeof(dual_args) / sizeof(dual_args[0])),
+                             const_cast<char **>(dual_args), &options, &help, &error));
+    assert(options.device0 == "/dev/video10" && options.device1 == "/dev/video11");
+    assert(options.width == 1280 && options.output_width == 1280);
+    assert(options.ai_mode == AppOptions::AiMode::Async && options.record);
 }
 
 } // namespace

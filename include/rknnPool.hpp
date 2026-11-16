@@ -25,7 +25,6 @@
 #include "opencv2/core/core.hpp"
 #include "opencv2/imgcodecs.hpp"
 #include "opencv2/imgproc.hpp"
-#include "ThreadPool.hpp"
 using cv::Mat;
 using std::queue;
 using std::vector;
@@ -56,6 +55,8 @@ public:
     int interf(detect_result_group_t &detect_result_group);
     rknn_lite(const char *dst, int n, int class_num, int id);
     ~rknn_lite();
+    rknn_lite(const rknn_lite &) = delete;
+    rknn_lite &operator=(const rknn_lite &) = delete;
     bool valid() const { return initialized_; }
 };
 
@@ -121,9 +122,9 @@ rknn_lite::rknn_lite(const char *model_name, int n, int class_num, int id)
         return;
     }
 
-    if (io_num.n_input == 0 || io_num.n_output < 3)
+    if (io_num.n_input != 1 || io_num.n_output < 3)
     {
-        printf("RKNN model must expose one input and at least three outputs\n");
+        printf("RKNN model must expose exactly one input and at least three outputs\n");
         rknn_destroy(rkModel);
         rkModel = 0;
         return;
@@ -237,15 +238,15 @@ int rknn_lite::interf(detect_result_group_t &detect_result_group)
         return ret;
 
     // 设置输出
-    rknn_output outputs[io_num.n_output];
-    memset(outputs, 0, sizeof(outputs));
+    std::vector<rknn_output> outputs(io_num.n_output);
+    memset(outputs.data(), 0, sizeof(rknn_output) * outputs.size());
     for (int i = 0; i < io_num.n_output; i++)
         outputs[i].want_float = 0; // 调用npu进行推演
     ret = rknn_run(rkModel, NULL);
     if (ret < 0)
         return ret;
     // 获取npu的推演输出结果
-    ret = rknn_outputs_get(rkModel, io_num.n_output, outputs, NULL);
+    ret = rknn_outputs_get(rkModel, io_num.n_output, outputs.data(), NULL);
     if (ret < 0)
         return ret;
 
@@ -280,8 +281,8 @@ int rknn_lite::interf(detect_result_group_t &detect_result_group)
                        out_zps, out_scales, &detect_result_group, class_num);
     if (ret < 0)
     {
-        rknn_outputs_release(rkModel, io_num.n_output, outputs);
-        return ret;
+        const int release_ret = rknn_outputs_release(rkModel, io_num.n_output, outputs.data());
+        return release_ret < 0 ? release_ret : ret;
     }
 
     // Draw Objects
@@ -302,9 +303,8 @@ int rknn_lite::interf(detect_result_group_t &detect_result_group)
         //putText(ori_img, text, cv::Point(x1, y1 + 12), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 255, 255));
     }
 
-    ret = rknn_outputs_release(rkModel, io_num.n_output, outputs);
-
-    return 0;
+    ret = rknn_outputs_release(rkModel, io_num.n_output, outputs.data());
+    return ret;
 }
 
 static unsigned char *load_data(FILE *fp, size_t ofst, size_t sz)

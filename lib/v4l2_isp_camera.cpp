@@ -76,6 +76,8 @@ struct V4L2IspCamera::CameraState : public std::enable_shared_from_this<CameraSt
     uint32_t stride_y = 0;
     uint32_t stride_uv = 0;
     uint32_t plane_count = 0;
+    std::array<size_t, VIDEO_MAX_PLANES> sizeimage{};
+    uint32_t fps = 0;
     std::vector<Slot> slots;
     std::shared_ptr<camera::BufferLeaseState> lease_state;
     mutable std::mutex ioctl_mutex;
@@ -118,6 +120,16 @@ struct V4L2IspCamera::CameraState : public std::enable_shared_from_this<CameraSt
         }
         slots[index].state = camera::BufferSlotState::Queued;
         return true;
+    }
+
+    void stop_stream_on_error() noexcept {
+        std::lock_guard<std::mutex> lock(ioctl_mutex);
+        if (fd < 0 || !streaming) {
+            return;
+        }
+        v4l2_buf_type type = buffer_type;
+        (void)xioctl(fd, VIDIOC_STREAMOFF, &type);
+        streaming = false;
     }
 
     void close_dma_fds_and_maps() {
@@ -173,6 +185,19 @@ V4L2IspCamera::V4L2IspCamera(Config config) : config_(std::move(config)) {}
 V4L2IspCamera::~V4L2IspCamera() {
     std::string ignored;
     (void)stop(&ignored);
+}
+
+bool V4L2IspCamera::set_config(Config config, std::string *error) {
+    if (state_) {
+        if (error) *error = "cannot change V4L2 configuration while camera is open";
+        return false;
+    }
+    if (config.device.empty() || config.width == 0 || config.height == 0 || config.fps == 0 || config.buffer_count < 2) {
+        if (error) *error = "invalid V4L2 configuration";
+        return false;
+    }
+    config_ = std::move(config);
+    return true;
 }
 
 bool V4L2IspCamera::open(std::string *error) {
@@ -253,6 +278,9 @@ bool V4L2IspCamera::open(std::string *error) {
         state->stride_uv = state->plane_count > 1
                                ? format.fmt.pix_mp.plane_fmt[1].bytesperline
                                : state->stride_y;
+        for (uint32_t plane = 0; plane < state->plane_count; ++plane) {
+            state->sizeimage[plane] = format.fmt.pix_mp.plane_fmt[plane].sizeimage;
+        }
         return true;
     };
 
@@ -285,6 +313,7 @@ bool V4L2IspCamera::open(std::string *error) {
         state->plane_count = 1;
         state->stride_y = format.fmt.pix.bytesperline;
         state->stride_uv = state->stride_y;
+        state->sizeimage[0] = format.fmt.pix.sizeimage;
         return true;
     };
 
@@ -300,9 +329,51 @@ bool V4L2IspCamera::open(std::string *error) {
         state->shutdown();
         return false;
     }
+
+    // Ask the driver for the actual frame interval. Some capture nodes do not
+    // implement S_PARM/G_PARM; in that case keep fps=0 so callers can report
+    // the negotiated rate as unknown instead of presenting the request as a
+    // confirmed value.
+    auto read_actual_fps = [&]() {
+        v4l2_streamparm parm{};
+        parm.type = state->buffer_type;
+        if (xioctl(state->fd, VIDIOC_G_PARM, &parm) == 0 &&
+            parm.parm.capture.timeperframe.numerator != 0 &&
+            parm.parm.capture.timeperframe.denominator != 0) {
+            const uint32_t numerator = parm.parm.capture.timeperframe.numerator;
+            const uint32_t denominator = parm.parm.capture.timeperframe.denominator;
+            state->fps = (denominator + numerator / 2U) / numerator;
+            return;
+        }
+        if (config_.fps == 0) return;
+        parm = {};
+        parm.type = state->buffer_type;
+        parm.parm.capture.timeperframe.numerator = 1;
+        parm.parm.capture.timeperframe.denominator = config_.fps;
+        if (xioctl(state->fd, VIDIOC_S_PARM, &parm) != 0) return;
+        parm = {};
+        parm.type = state->buffer_type;
+        if (xioctl(state->fd, VIDIOC_G_PARM, &parm) == 0 &&
+            parm.parm.capture.timeperframe.numerator != 0 &&
+            parm.parm.capture.timeperframe.denominator != 0) {
+            const uint32_t numerator = parm.parm.capture.timeperframe.numerator;
+            const uint32_t denominator = parm.parm.capture.timeperframe.denominator;
+            state->fps = (denominator + numerator / 2U) / numerator;
+        }
+    };
+    read_actual_fps();
+    bool valid_sizeimage = state->plane_count > 0 &&
+                           state->plane_count <= VIDEO_MAX_PLANES;
+    if (valid_sizeimage) {
+        for (uint32_t plane = 0; plane < state->plane_count; ++plane) {
+            if (state->sizeimage[plane] == 0) valid_sizeimage = false;
+        }
+    }
     if (state->width == 0 || state->height == 0 || (state->width & 1U) != 0 ||
         (state->height & 1U) != 0 || state->plane_count == 0 ||
-        state->plane_count > VIDEO_MAX_PLANES || state->stride_y < state->width) {
+        state->plane_count > VIDEO_MAX_PLANES || state->stride_y < state->width ||
+        state->stride_uv < state->width || !valid_sizeimage ||
+        (state->fourcc == V4L2_PIX_FMT_NV12M && state->plane_count < 2)) {
         if (error) *error = "V4L2 returned an invalid NV12 plane/stride layout";
         state->shutdown();
         return false;
@@ -337,8 +408,20 @@ bool V4L2IspCamera::open(std::string *error) {
         }
 
         state->slots[index].plane_count = state->multi_planar ? buffer.length : 1;
+        if (state->slots[index].plane_count == 0 ||
+            state->slots[index].plane_count > state->plane_count) {
+            if (error) *error = "VIDIOC_QUERYBUF returned an invalid plane count";
+            state->shutdown();
+            return false;
+        }
         for (uint32_t plane = 0; plane < state->slots[index].plane_count; ++plane) {
             const size_t length = state->multi_planar ? planes[plane].length : buffer.length;
+            if (length == 0 || (state->sizeimage[plane] != 0 &&
+                                length < state->sizeimage[plane])) {
+                if (error) *error = "V4L2 buffer is smaller than negotiated sizeimage";
+                state->shutdown();
+                return false;
+            }
             const off_t offset = state->multi_planar ? planes[plane].m.mem_offset
                                                      : static_cast<off_t>(buffer.m.offset);
             void *address = ::mmap(nullptr, length, PROT_READ | PROT_WRITE, MAP_SHARED,
@@ -376,7 +459,7 @@ bool V4L2IspCamera::open(std::string *error) {
     capabilities_.dma_buf_export = all_dma_exported;
     capabilities_.width = state->width;
     capabilities_.height = state->height;
-    capabilities_.fps = config_.fps;
+    capabilities_.fps = state->fps;
     capabilities_.fourcc = state->fourcc;
     capabilities_.plane_count = state->plane_count;
     capabilities_.stride_y = state->stride_y;
@@ -441,6 +524,18 @@ std::optional<camera::CameraFrame> V4L2IspCamera::dequeue(std::string *error) {
         if (error) *error = ioctl_error(config_.device, "poll");
         return std::nullopt;
     }
+    if ((descriptor.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0 ||
+        (descriptor.revents & (POLLIN | POLLRDNORM)) == 0) {
+        state_->set_dqbuf_error();
+        state_->stop_stream_on_error();
+        if (error) {
+            std::ostringstream stream;
+            stream << "poll returned capture error events: revents=0x"
+                   << std::hex << descriptor.revents;
+            *error = stream.str();
+        }
+        return std::nullopt;
+    }
 
     v4l2_buffer buffer{};
     buffer.type = state_->buffer_type;
@@ -462,12 +557,22 @@ std::optional<camera::CameraFrame> V4L2IspCamera::dequeue(std::string *error) {
         return std::nullopt;
     }
     if (buffer.index >= state_->slots.size()) {
+        state_->set_dqbuf_error();
+        state_->stop_stream_on_error();
         if (error) *error = "VIDIOC_DQBUF returned an invalid buffer index";
         return std::nullopt;
     }
+    bool slot_was_queued = false;
     {
         std::lock_guard<std::mutex> lock(state_->ioctl_mutex);
-        state_->slots[buffer.index].state = camera::BufferSlotState::Dequeued;
+        slot_was_queued = state_->slots[buffer.index].state == camera::BufferSlotState::Queued;
+        if (slot_was_queued) state_->slots[buffer.index].state = camera::BufferSlotState::Dequeued;
+    }
+    if (!slot_was_queued) {
+        state_->set_dqbuf_error();
+        state_->stop_stream_on_error();
+        if (error) *error = "VIDIOC_DQBUF returned a slot that was not queued";
+        return std::nullopt;
     }
     if (buffer.flags & V4L2_BUF_FLAG_ERROR) {
         {
@@ -476,6 +581,41 @@ std::optional<camera::CameraFrame> V4L2IspCamera::dequeue(std::string *error) {
         }
         (void)state_->queue_slot(buffer.index);
         if (error) *error = "V4L2 buffer returned with V4L2_BUF_FLAG_ERROR";
+        return std::nullopt;
+    }
+
+    // Validate each payload before exposing its mapped address. data_offset
+    // and bytesused are returned by the driver for every multi-planar buffer;
+    // single-planar NV12 reports the combined payload in buffer.bytesused.
+    const uint32_t plane_count = state_->slots[buffer.index].plane_count;
+    std::array<size_t, VIDEO_MAX_PLANES> offsets{};
+    std::array<size_t, VIDEO_MAX_PLANES> used{};
+    for (uint32_t plane = 0; plane < plane_count; ++plane) {
+        const size_t offset = state_->multi_planar ? planes[plane].data_offset : 0;
+        const size_t bytesused = state_->multi_planar ? planes[plane].bytesused
+                                                       : buffer.bytesused;
+        const size_t mapped_length = state_->slots[buffer.index].planes[plane].length;
+        if (offset > mapped_length ||
+            (state_->sizeimage[plane] != 0 &&
+             (offset > state_->sizeimage[plane] || bytesused > state_->sizeimage[plane])) ||
+            bytesused < offset ||
+            bytesused - offset > mapped_length - offset) {
+            state_->set_dqbuf_error();
+            (void)state_->queue_slot(buffer.index);
+            if (error) *error = "V4L2 DQBUF returned an invalid plane offset/bytesused";
+            return std::nullopt;
+        }
+        offsets[plane] = offset;
+        used[plane] = bytesused - offset;
+    }
+    const size_t required_y = static_cast<size_t>(state_->stride_y) * state_->height;
+    const size_t required_uv = static_cast<size_t>(state_->stride_uv) * (state_->height / 2);
+    if (used[0] < required_y ||
+        (plane_count > 1 ? used[1] < required_uv
+                         : used[0] < required_y + required_uv)) {
+        state_->set_dqbuf_error();
+        (void)state_->queue_slot(buffer.index);
+        if (error) *error = "V4L2 DQBUF payload is smaller than negotiated NV12 layout";
         return std::nullopt;
     }
     if (!state_->lease_state->acquire(buffer.index)) {
@@ -501,23 +641,49 @@ std::optional<camera::CameraFrame> V4L2IspCamera::dequeue(std::string *error) {
     frame.desc.timestamp_ns = static_cast<uint64_t>(buffer.timestamp.tv_sec) * 1000000000ULL +
                               static_cast<uint64_t>(buffer.timestamp.tv_usec) * 1000ULL;
     frame.desc.flags = buffer.flags;
-    frame.desc.data = state_->slots[buffer.index].planes[0].address;
-    frame.desc.data_length = state_->slots[buffer.index].planes[0].length;
+    frame.desc.timestamp_flags = buffer.flags & V4L2_BUF_FLAG_TIMESTAMP_MASK;
+    frame.desc.timestamp_source_flags = buffer.flags & V4L2_BUF_FLAG_TIMESTAMP_MASK;
+#ifdef V4L2_BUF_FLAG_TSTAMP_SRC_MASK
+    frame.desc.timestamp_source_flags |= buffer.flags & V4L2_BUF_FLAG_TSTAMP_SRC_MASK;
+#endif
+#ifdef V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC
+    frame.desc.clock_domain = (buffer.flags & V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC)
+                                  ? camera::CameraClockDomain::Monotonic
+                                  : camera::CameraClockDomain::Realtime;
+#else
+    frame.desc.clock_domain = camera::CameraClockDomain::Unknown;
+#endif
+    frame.desc.data = static_cast<uint8_t *>(state_->slots[buffer.index].planes[0].address) + offsets[0];
+    frame.desc.data_length = used[0];
+    frame.desc.bytesused = used[0];
+    frame.desc.data_offset = offsets[0];
+    frame.desc.sizeimage = state_->sizeimage[0] > offsets[0]
+                               ? state_->sizeimage[0] - offsets[0]
+                               : 0;
     frame.desc.dma_fd = state_->slots[buffer.index].planes[0].dma_fd;
     if (state_->slots[buffer.index].plane_count > 1) {
-        frame.desc.data_uv = state_->slots[buffer.index].planes[1].address;
-        frame.desc.data_uv_length = state_->slots[buffer.index].planes[1].length;
+        frame.desc.data_uv = static_cast<uint8_t *>(state_->slots[buffer.index].planes[1].address) + offsets[1];
+        frame.desc.data_uv_length = used[1];
+        frame.desc.bytesused_uv = used[1];
+        frame.desc.data_offset_uv = offsets[1];
+        frame.desc.sizeimage_uv = state_->sizeimage[1] > offsets[1]
+                                      ? state_->sizeimage[1] - offsets[1]
+                                      : 0;
         frame.desc.dma_fd_uv = state_->slots[buffer.index].planes[1].dma_fd;
     } else {
         frame.desc.data_uv = static_cast<uint8_t *>(frame.desc.data) + frame.desc.offset_uv;
-        frame.desc.data_uv_length = frame.desc.data_length > frame.desc.offset_uv
-                                        ? frame.desc.data_length - frame.desc.offset_uv
-                                        : 0;
+        frame.desc.data_uv_length = frame.desc.data_length - frame.desc.offset_uv;
+        frame.desc.bytesused_uv = frame.desc.data_uv_length;
+        frame.desc.data_offset_uv = offsets[0] + frame.desc.offset_uv;
+        frame.desc.sizeimage_uv = frame.desc.sizeimage > frame.desc.offset_uv
+                                      ? frame.desc.sizeimage - frame.desc.offset_uv
+                                      : 0;
         frame.desc.dma_fd_uv = frame.desc.dma_fd;
     }
     frame.owner = state_;
     try {
-        frame.lease = std::make_shared<camera::FrameLease>(state_->lease_state, buffer.index);
+        frame.lease = std::make_shared<camera::FrameLease>(state_->lease_state, buffer.index,
+                                                            state_);
     } catch (const std::exception &exception) {
         state_->lease_state->release(buffer.index);
         if (error) *error = std::string("cannot allocate camera frame lease: ") + exception.what();
@@ -539,24 +705,33 @@ bool V4L2IspCamera::stop(std::string *error) {
         }
         return false;
     }
+    bool streamoff_ok = true;
     {
         std::lock_guard<std::mutex> lock(state_->ioctl_mutex);
         if (state_->fd >= 0 && state_->streaming) {
             v4l2_buf_type type = state_->buffer_type;
             if (xioctl(state_->fd, VIDIOC_STREAMOFF, &type) < 0 && errno != EINVAL) {
                 if (error) *error = ioctl_error(config_.device, "VIDIOC_STREAMOFF");
-                return false;
+                streamoff_ok = false;
+                // Leave the state marked streaming so shutdown() retries the
+                // ioctl before it force-closes mappings and the fd.
+            } else {
+                state_->streaming = false;
             }
-            state_->streaming = false;
         }
     }
-    state_->shutdown();
+    // STREAMOFF failure leaves the driver state uncertain, but userspace must
+    // still release mappings and the fd. shutdown() repeats STREAMOFF only if
+    // streaming is still marked true, then performs the unconditional close.
+    (void)state_->shutdown();
     state_.reset();
-    return true;
+    return streamoff_ok;
 }
 
 bool V4L2IspCamera::is_streaming() const {
-    return state_ && state_->streaming;
+    if (!state_) return false;
+    std::lock_guard<std::mutex> lock(state_->ioctl_mutex);
+    return state_->streaming;
 }
 
 size_t V4L2IspCamera::in_flight() const {
@@ -574,6 +749,19 @@ V4L2IspCamera::Stats V4L2IspCamera::stats() const {
 V4L2IspCamera::V4L2IspCamera() : config_{} {}
 V4L2IspCamera::V4L2IspCamera(Config config) : config_(std::move(config)) {}
 V4L2IspCamera::~V4L2IspCamera() = default;
+
+bool V4L2IspCamera::set_config(Config config, std::string *error) {
+    if (state_) {
+        if (error) *error = "cannot change V4L2 configuration while camera is open";
+        return false;
+    }
+    if (config.device.empty() || config.width == 0 || config.height == 0 || config.fps == 0 || config.buffer_count < 2) {
+        if (error) *error = "invalid V4L2 configuration";
+        return false;
+    }
+    config_ = std::move(config);
+    return true;
+}
 
 bool V4L2IspCamera::open(std::string *error) {
     if (error) *error = "V4L2 ISP camera requires a Linux target";

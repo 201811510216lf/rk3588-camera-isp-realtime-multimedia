@@ -52,6 +52,11 @@ public:
     void Release();
 
 private:
+    // Returns true only when no pending input exists. A timeout/error keeps
+    // ownership until Release tears down the MPP context; no asynchronous
+    // reset completion is assumed without target-BSP evidence.
+    bool reset_and_release_pending();
+
     MppCtx          mpp_ctx_;
     MppApi*         mpp_mpi_;
     MppEncCfg       enc_cfg_;
@@ -66,6 +71,13 @@ private:
     int             bitrate_;
     MppCodingType   mpp_type_;
     bool            initialized_;
+    bool            faulted_;
+
+    // If encode_get_packet cannot establish completion, retain the submitted
+    // frame and buffer until MPP reset/destroy has completed. They must not be
+    // returned to the buffer group while the hardware may still reference them.
+    MppFrame        pending_frame_;
+    MppBuffer       pending_buffer_;
 
     // 预分配的 YUV 缓冲区，避免每帧 malloc/free
     uint8_t*        yuv_buffer_;

@@ -2,7 +2,7 @@
 
 > **用途**：将本文件放在 `demo_multhread_decode_infer_mulmodel` 仓库根目录，交给 Codex 在该仓库中按顺序实施。
 >
-> **首要原则**：这是对**当前仓库的最小侵入式演进**，不是重新开发一套工程；原有 RTSP/MP4 模式必须能够回归。**完成全部可以在当前环境执行的工作才结束**。不得虚构板端、Sensor 或 ISP 的成功验证。
+> **首要原则**：这是对当前仓库的最小侵入式收敛，最终只交付单路 MIPI Camera/ISP 录像与单模型 AI 事件识别链路。旧 RTSP/MP4、四模型、四宫格和 RTMP 业务不再进入构建目标。**完成全部可以在当前环境执行的工作才结束**。不得虚构板端、Sensor 或 ISP 的成功验证。
 >
 > 参考代码风格：[RK-MediaProject](https://github.com/JoeChen2me/RK-MediaProject)（`include/` + `src/`、C++17、CMake、资源生命周期显式、线程职责清晰、日志与错误处理明确）。该项目仅作风格参考，禁止直接复制不兼容的业务逻辑。
 
@@ -42,7 +42,7 @@
 
 - 不新写 Linux ISP 驱动，不自研 AE/AWB/3A 算法，不擅自修改内核、DTS 或 IQ 文件；没有板端证据时只提供探测步骤和适配点。
 - 不强制迁移当前架构到 GStreamer、Qt、新线程框架或全新项目；不复制参考仓库成新工程。
-- 不为了简历新增四路扩展、四宫格、强行 NPU 多核绑定；旧功能如确有用则保留在 legacy 模式，不因清理造成回归。
+- 不新增四路扩展、四宫格、四模型或 RTMP；旧业务文件在确认无公共依赖后删除并保留 Git 历史。
 - 不假定 RKNN Runtime 可以直接消费任意 DMA-BUF；优先复用现有 RGA -> RKNN 输入转换路径。
 - 不承诺“全链路零拷贝”：准确记录哪些段共享 fd、哪些段需要独立输出缓冲或拷贝。
 
@@ -66,19 +66,17 @@ Codex 必须先读取当前仓库，不得按本文猜测的路径直接覆盖�
 
 ## 2. 最小改造架构：先分离输入，再增加 NV12 直通
 
-### 2.1 保留老链路
+### 2.1 删除旧业务链路
 
-保留项目目前能够工作的 RTSP/MP4 -> FFmpeg -> MPP Decode -> RGA/RKNN -> (现有合成/编码/推流) 链路。若历史代码固定为四路/四模型，**不要第一阶段强拆**，只为新模式提供单路入口；确认回归后再局部简化。
+旧 RTSP/MP4 -> FFmpeg -> MPP Decode -> 四模型/四宫格 -> RTMP/FLV 仅作为审计基线，不再保留为产品路径。删除前确认 MPP Encoder、RGA、RKNN 单模型和公共队列/lease 无依赖。
 
 ### 2.2 新增 `mipi` 模式（配置驱动）
 
 新增且仅新增用户可选择的输入模式：
 
-- `legacy`（旧行为；默认值保留原运行行为）
 - `mipi`（V4L2 采集 ISP 输出的 NV12，绕过 FFmpeg demux / MPP decode）
-- `replay` **可选**：如果旧 MP4 输入已存在则保留，不额外开发。
 
-新增参数尽量使用已有 CLI / 配置机制；若无机制，仅加入简洁的 `--source=legacy|mipi`、`--device=/dev/videoX`、`--width`、`--height`、`--fps`、`--ai-enable`、`--ai-fps`、`--duration-sec`、`--output` 参数（确实实现后才写文档）。不得假设 `/dev/video0` 必然是 ISP mainpath。
+新增参数尽量使用已有 CLI / 配置机制；当前仅支持 `--source=mipi`、`--device=/dev/videoX`、`--width`、`--height`、`--fps`、`--ai-enable`、`--ai-fps`、`--duration-sec`、`--output` 和单个 `--model` 参数（确实实现后才写文档）。不得假设 `/dev/video0` 必然是 ISP mainpath。
 
 推荐只新增 1 个源文件和 1 个对应头文件，例如：
 
@@ -135,8 +133,8 @@ struct VideoFrameDesc {
 **最小改动顺序**：先只实现 `mipi -> MPP H.264 -> 已有 sink`，可以稳定工作后再复用现有 RGA/RKNN 建 AI 分支。禁止一开始重写全部线程。
 
 1. `Capture`：V4L2 DQBUF 后分发 Frame lease，明确每个消费者完成通知。
-2. `Encode`：复用现有 MPP H.264 encoder；若原输出只能接收四宫格/合成结果，增加一条直接的单路 encode 入口，而不是重写 encoder。输出保持既有推流能力；只有验证容器封装才支持 `.mp4`。
-3. `AI`：复用现有 RGA resize/convert + RKNN runtime，初始只运行**一个现有可用模型**。如果当前只有四个二分类模型，不得虚构一个已训练的四分类模型；可以先配置 `model-index` 选择一个旧模型。以后更换为多类别模型独立验收。
+2. `Encode`：复用现有 MPP H.264 encoder，直接输出 raw H.264 文件；不接入旧四宫格或 RTMP sink。
+3. `AI`：复用现有 RGA resize/convert + RKNN runtime，只加载一个模型路径；不保留 model-index 或多模型调度。
 4. AI 调度：可配置最大处理频率（如 `--ai-fps=10`，仅为默认目标，可根据设备调整）；有界队列容量 1～2，满时丢旧待处理帧，单独统计 `ai_dropped_frames`。不能让 AI 分支长期占用 Camera Buffer：RGA 预处理后尽早释放源帧；若预处理异步，等待真正完成。
 5. 编码分支与 AI 分支隔离。AI 线程阻塞或模型加载失败应有明确的 fallback 策略（禁用 AI、录像继续，或者用户配置为硬失败）；不得静默忽略。
 6. 事件输出最小化：JSONL/CSV（如原项目已有事件格式则复用），至少包含单调时间戳、frame sequence、model identifier、label/confidence（模型有该字段时）、推理耗时；不得输出假的行为类别。OSD 不是必须项，不为了显示检测框增加视频合成负担。
@@ -175,7 +173,7 @@ struct VideoFrameDesc {
 
 | 测试 | 执行环境 | 通过条件 |
 |---|---|---|
-| 旧 RTSP/MP4 输入回归 | 原项目可用环境 | 原输入、旧模型、输出行为不回退 |
+| Legacy 依赖清理审计 | 普通开发机 | 旧文件无新链路引用且不进入 CMake |
 | `--help` / 非法参数 | 普通开发机 | 选项明晰、错误码非零 |
 | mipi 不存在设备 | 普通开发机 | 说明具体错误，进程正常释放资源 |
 | V4L2 单/多平面格式处理 | mock/真实设备 | 类型正确、不越界、拒绝错误布局 |
@@ -186,7 +184,7 @@ struct VideoFrameDesc {
 | ISP / AE 控制 | RK3588 + 对应 BSP | 有真实调试记录/参数回读 |
 | 30min/1h 稳定性 | RK3588 | 实测记录帧率、CPU、RSS、丢帧；不预设零丢帧 |
 
-建议最少埋点：`capture_fps`, `encode_fps`, `ai_fps`, `capture_dqbuf_ms`, `encode_latency_ms`, `ai_infer_ms`, `v4l2_inflight`, `encode_queue_depth`, `ai_queue_depth`, `ai_skip`, `ai_drop_oldest`, `capture_error`, `encode_error`, `rss_kb`。对无法获得的指标不输出虚假数值。
+当前已取得：`capture_fps`, `encode_fps`, `ai_fps`, `encode_latency_ms`, `ai_infer_ms`, `v4l2_inflight`, `ai_queue_depth`, `record_queue_drop`, `ai_skip`, `ai_drop_oldest`, `capture_errors`, `encode_errors`；`capture_dqbuf_ms`、P95、RSS 等仍为待补充指标。对无法获得的指标不输出虚假数值。
 
 **门禁 G6**：执行 `cmake -S . -B build` / `cmake --build build -j` 或仓库对应命令，现有测试和新增测试全部跑；缺依赖时说明依赖与不能执行的具体测试，不能把 mock 编译成功写成板端通过。把日志/结果保存到 `docs/isp_migration/04_test_report.md`。
 
@@ -216,7 +214,7 @@ v4l2-ctl -d /dev/videoX --list-formats-ext
 Codex 应在仓库内完成以下文件（已有相近文件则更新，避免重复）：
 
 ```text
-README.md                                  # 新/旧两条链路 + 实际可运行命令
+README.md                                  # 单路 MIPI 链路 + 实际可运行命令
 CODEX_CAMERA_ISP_EXECUTION_PLAN.md        # 本计划，维护完成状态
 docs/isp_migration/00_repository_audit.md # 真实源码结构与设计切入点
 docs/isp_migration/01_baseline.md         # 修改前测试记录
@@ -241,7 +239,7 @@ scripts/isp_probe.sh                       # 只读探测脚本
 ## 11. 完成状态（由 Codex 执行后填写，初始都未完成）
 
 - [x] G0 源码审计与基线
-- [x] G1 旧模式保留、新输入切换
+- [x] G1 单路 MIPI 输入与 CLI 收敛
 - [x] G2 V4L2 ISP NV12 采集（代码完成，待板端设备）
 - [x] G3 录像优先 + 可选单模型 AI（代码完成，待板端设备/模型）
 - [x] G4 Buffer 生命周期与压力测试（mock 源码完成，待 Linux 编译运行）

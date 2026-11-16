@@ -13,7 +13,6 @@ struct MipiPipelineConfig {
     std::string output_path = "camera.h264";
     std::string events_path;
     std::string model_path;
-    uint32_t model_index = 0;
     uint32_t bitrate = 4000000;
     uint32_t duration_sec = 0;
     bool ai_enable = false;
@@ -27,6 +26,7 @@ struct MipiPipelineStats {
     uint64_t capture_frames = 0;
     uint64_t encoded_frames = 0;
     uint64_t capture_drop = 0;
+    uint64_t record_queue_drop = 0;
     uint64_t encode_drop = 0;
     uint64_t ai_processed = 0;
     uint64_t ai_skip = 0;

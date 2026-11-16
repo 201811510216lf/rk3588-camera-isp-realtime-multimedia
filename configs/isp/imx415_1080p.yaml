@@ -1,0 +1,26 @@
+version: 1
+sensor_profile: IMX415_SIM
+input:
+  width: 1920
+  height: 1080
+  format: RAW10
+  bayer: RGGB
+blc:
+  enabled: true
+  r: 64
+  gr: 64
+  gb: 64
+  b: 64
+awb:
+  enabled: true
+  algorithm: gray_world
+ae:
+  enabled: true
+  target_luma: 110
+denoise:
+  spatial_strength: 0.4
+  temporal_strength: 0.3
+sharpen:
+  strength: 0.2
+gamma:
+  value: 2.2

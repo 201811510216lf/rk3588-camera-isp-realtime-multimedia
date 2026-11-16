@@ -12,6 +12,13 @@
 
 namespace camera {
 
+enum class CameraClockDomain : uint8_t {
+    Unknown = 0,
+    Monotonic = 1,
+    Realtime = 2,
+    Sensor = 3,
+};
+
 // A V4L2 slot is owned by the capture pool. Consumers only hold a lease; they
 // must never close the DMA-BUF or mmap address themselves.
 enum class BufferSlotState {
@@ -30,6 +37,20 @@ struct CameraBufferDesc {
     uint32_t stride_y = 0;
     uint32_t stride_uv = 0;
     uint32_t offset_uv = 0;
+    // Bytes available from each data pointer after the driver's data_offset.
+    // These are bounded by bytesused, not just the mmap length, so consumers
+    // cannot accidentally read padding or an incomplete capture buffer.
+    size_t bytesused = 0;
+    size_t bytesused_uv = 0;
+    size_t sizeimage = 0;
+    size_t sizeimage_uv = 0;
+    size_t data_offset = 0;
+    size_t data_offset_uv = 0;
+    uint32_t timestamp_flags = 0;
+    // Raw V4L2 timestamp source bits retained for diagnostics. A value of
+    // zero means that the driver did not expose a trustworthy source.
+    uint32_t timestamp_source_flags = 0;
+    CameraClockDomain clock_domain = CameraClockDomain::Unknown;
     uint64_t sequence = 0;
     uint64_t timestamp_ns = 0;
     uint32_t flags = 0;
@@ -122,8 +143,9 @@ private:
 
 class FrameLease {
 public:
-    FrameLease(std::shared_ptr<BufferLeaseState> state, uint32_t index)
-        : state_(std::move(state)), index_(index) {}
+    FrameLease(std::shared_ptr<BufferLeaseState> state, uint32_t index,
+               std::shared_ptr<void> owner = {})
+        : state_(std::move(state)), owner_(std::move(owner)), index_(index) {}
 
     ~FrameLease() { reset(); }
 
@@ -135,10 +157,15 @@ public:
             state_->release(index_);
             state_.reset();
         }
+        owner_.reset();
     }
 
 private:
     std::shared_ptr<BufferLeaseState> state_;
+    // Keep the CameraState alive even when a caller retains only the lease.
+    // This prevents owner/lease lifetime splitting from unmapping a slot while
+    // a downstream queue still owns a frame.
+    std::shared_ptr<void> owner_;
     uint32_t index_ = 0;
 };
 

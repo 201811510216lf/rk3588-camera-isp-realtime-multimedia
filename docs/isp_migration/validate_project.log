@@ -1,1 +1,2 @@
-validate_project: PASS (19 required files)
+python tests/validate_project.py
+validate_project: PASS (20 required files)
