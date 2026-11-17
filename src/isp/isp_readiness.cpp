@@ -75,8 +75,11 @@ IspControlResult validate_capture_binding(const IspConfig &config, const Capture
     if (config.cameras.size() != 2)
         return result(ControlStatus::ConfigMismatch, 0, "Pipeline requires two explicit ISP camera mappings");
     for (const auto &camera : config.cameras) {
-        if (camera.video_node != capture.nodes[camera.camera_id] || camera.width != capture.width ||
-            camera.height != capture.height || camera.fps != capture.fps ||
+        if ((!capture.nodes[camera.camera_id].empty() &&
+             camera.video_node != capture.nodes[camera.camera_id]) ||
+            (capture.width && camera.width != capture.width) ||
+            (capture.height && camera.height != capture.height) ||
+            (capture.fps && camera.fps != capture.fps) ||
             (capture.pixel_format != "auto" && camera.pixel_format != capture.pixel_format))
             return result(ControlStatus::ConfigMismatch, camera.camera_id,
                           "ISP mapping and requested Camera node/size/FPS/format differ");
@@ -102,14 +105,17 @@ IspReadiness evaluate_runtime_status(IspCameraId expected_id, const IspStatus &s
     }
     return output;
 }
-IspReadiness evaluate_readiness(const AiqCameraConfig &config, const IspCameraEvidence &evidence,
-                                const IspStatus &status, bool allow_unverified) {
+namespace {
+IspReadiness evaluate_stage_readiness(const AiqCameraConfig &config, const IspCameraEvidence &evidence,
+                                      const IspStatus &status, bool allow_unverified,
+                                      bool require_active_output) {
     auto output = invalid_status(config.camera_id, status);
     if (!output.result.ok())
         return output;
     output.result = result(ControlStatus::BackendUnavailable, config.camera_id,
                            "ISP readiness is not confirmed; source=NOT_MEASURED");
-    if (!valid_owner(config.ownership) || evidence.camera_id != config.camera_id ||
+    if ((config.pixel_format != "NV12" && config.pixel_format != "NV12M") || !valid_owner(config.ownership) ||
+        evidence.camera_id != config.camera_id ||
         (!status.sensor.entity.empty() && status.sensor.entity != config.sensor_entity) ||
         (!evidence.sensor.identity.entity.empty() &&
          evidence.sensor.identity.entity != config.sensor_entity) ||
@@ -132,13 +138,14 @@ IspReadiness evaluate_readiness(const AiqCameraConfig &config, const IspCameraEv
         return output;
     }
     if ((!evidence.graph.entities.empty() && !evidence.mapping_valid) ||
-        (!evidence.output.active_format.empty() && !evidence.output_valid)) {
+        (require_active_output && !evidence.output.active_format.empty() && !evidence.output_valid)) {
         output.result = result(ControlStatus::ConfigMismatch, config.camera_id,
                                "Observed topology/output does not match configured processed ISP route");
         return output;
     }
     const bool verified =
-        evidence.valid() && evidence.live_evidence && evidence.graph.evidence == EvidenceSource::LiveDevice &&
+        evidence.mapping_valid && (!require_active_output || evidence.output_valid) &&
+        evidence.live_evidence && evidence.graph.evidence == EvidenceSource::LiveDevice &&
         evidence.output.evidence == EvidenceSource::LiveDevice && evidence.sensor.identity.confirmed &&
         evidence.sensor.identity.evidence == EvidenceSource::LiveDevice &&
         evidence.sensor.identity.entity == config.sensor_entity &&
@@ -146,10 +153,12 @@ IspReadiness evaluate_readiness(const AiqCameraConfig &config, const IspCameraEv
         status.sensor.entity == config.sensor_entity && status.ownership == config.ownership &&
         confirmed_status(status);
     if (verified) {
-        output.ready = true;
-        output.result =
-            result(ControlStatus::Ok, config.camera_id, "ISP readiness confirmed by live backend evidence");
-        output.result.hardware_confirmed = true;
+        output.ready = require_active_output;
+        output.result = result(ControlStatus::Ok, config.camera_id,
+                               require_active_output
+                                   ? "ISP readiness confirmed by live backend evidence"
+                                   : "Live Sensor/ISP ownership and 3A accepted; output negotiation pending");
+        output.result.hardware_confirmed = require_active_output;
     } else if (allow_unverified) {
         output.diagnostic_unverified = true;
         output.result =
@@ -157,6 +166,11 @@ IspReadiness evaluate_readiness(const AiqCameraConfig &config, const IspCameraEv
                    "UNVERIFIED_ISP diagnostic capture explicitly enabled; readiness remains unconfirmed");
     }
     return output;
+}
+} // namespace
+IspReadiness evaluate_readiness(const AiqCameraConfig &config, const IspCameraEvidence &evidence,
+                                const IspStatus &status, bool allow_unverified) {
+    return evaluate_stage_readiness(config, evidence, status, allow_unverified, true);
 }
 IspControlResult invoke_readiness_operation(const char *operation,
                                             const std::function<IspControlResult()> &callback) {
@@ -245,11 +259,11 @@ IspControlResult IspPipelineCoordinator::before_stream() {
         for (const auto &camera : p.config.cameras) {
             auto evidence = inspect_isp_camera(camera, *p.inspector);
             if ((camera.ownership == IspAiqOwnershipMode::InProcess &&
-                 (!evidence.valid() || !evidence.live_evidence)) ||
+                 (!evidence.mapping_valid || !evidence.live_evidence)) ||
                 (!evidence.graph.entities.empty() && !evidence.mapping_valid) ||
-                (!evidence.output.active_format.empty() && !evidence.output_valid))
+                (!evidence.output.video_node.empty() && evidence.output.video_node != camera.video_node))
                 return result(ControlStatus::ConfigMismatch, camera.camera_id,
-                              "Sensor/ISP/output mapping is missing or conflicts with capture configuration");
+                              "Sensor/ISP/output route is missing or conflicts with configured identities");
             p.evidence.emplace(camera.camera_id, std::move(evidence));
         }
         for (const auto &camera : p.config.cameras) {
@@ -268,8 +282,8 @@ IspControlResult IspPipelineCoordinator::before_stream() {
                 camera.start_order == AiqStartOrder::AfterStream)
                 continue;
             const auto readiness =
-                evaluate_readiness(camera, p.evidence.at(camera.camera_id), status(camera.camera_id),
-                                   p.config.allow_unverified_isp);
+                evaluate_stage_readiness(camera, p.evidence.at(camera.camera_id), status(camera.camera_id),
+                                         p.config.allow_unverified_isp, false);
             if (!readiness.result.ok())
                 return readiness.result;
         }
@@ -297,6 +311,10 @@ IspControlResult IspPipelineCoordinator::after_stream() {
         auto ready = p.manager.start_phase(AiqStartOrder::AfterStream, true);
         if (!ready.ok())
             return ready;
+        // S_FMT/G_FMT and STREAMON have now completed. Re-read each output instead of
+        // accepting the driver's defaults observed before the Camera was opened.
+        for (const auto &camera : p.config.cameras)
+            p.evidence[camera.camera_id] = inspect_isp_camera(camera, *p.inspector);
         for (const auto &camera : p.config.cameras) {
             const auto readiness =
                 evaluate_readiness(camera, p.evidence.at(camera.camera_id), status(camera.camera_id),

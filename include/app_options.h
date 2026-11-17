@@ -24,6 +24,11 @@ struct AppOptions {
     uint32_t output_width = 1920;
     uint32_t output_height = 1080;
     uint32_t fps = 30;
+    // Unset input options defer to each Camera entry in --isp-config.
+    bool input_width_set = false;
+    bool input_height_set = false;
+    bool input_fps_set = false;
+    bool input_pixel_format_set = false;
     uint32_t bitrate = 4000000;
     uint32_t minimum_free_mb = 1024; // MiB; zero disables the free-space threshold.
     uint32_t v4l2_timeout_ms = 1000;

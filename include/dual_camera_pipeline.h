@@ -43,6 +43,10 @@ struct DualCameraPipelineConfig {
     uint32_t input_width = 1920;
     uint32_t input_height = 1080;
     uint32_t fps = 30;
+    bool input_width_set = false;
+    bool input_height_set = false;
+    bool input_fps_set = false;
+    bool input_pixel_format_set = false;
     uint32_t capture_buffer_count = 6;
     std::string pixel_format = "auto";
     AppOptions::VideoMode video_mode = AppOptions::VideoMode::Joint;

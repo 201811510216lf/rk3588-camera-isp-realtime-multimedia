@@ -2,11 +2,13 @@
 
 #include "camera_frame.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 class V4L2IspCamera {
   public:
@@ -27,7 +29,15 @@ class V4L2IspCamera {
         bool dma_buf_export = false;
         uint32_t width = 0;
         uint32_t height = 0;
-        uint32_t fps = 0;
+        uint32_t fps = 0; // Rounded compatibility value; zero means unreported.
+        uint32_t frame_interval_numerator = 0;
+        uint32_t frame_interval_denominator = 0;
+        uint32_t field = 0;
+        std::array<size_t, 2> sizeimage{};
+        std::vector<uint32_t> supported_formats;
+        std::vector<std::string> supported_frame_sizes;
+        std::vector<std::string> supported_frame_intervals;
+        std::vector<std::string> enumeration_warnings;
         uint32_t fourcc = 0;
         uint32_t plane_count = 0;
         uint32_t stride_y = 0;
@@ -56,7 +66,7 @@ class V4L2IspCamera {
     std::optional<camera::CameraFrame> dequeue(std::string *error = nullptr);
     bool stop(std::string *error = nullptr);
 
-    bool is_open() const { return static_cast<bool>(state_); }
+    bool is_open() const { return static_cast<bool>(std::atomic_load(&state_)); }
     bool is_streaming() const;
     size_t in_flight() const;
     const Config &config() const { return config_; }

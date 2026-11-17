@@ -4,14 +4,20 @@
 
 | 验证层 | 当前状态 |
 |---|---|
-| C++17 软件核心与自动测试 | 当前增量Windows/MSVC与MSVC AddressSanitizer各26/26通过 |
+| C++17 软件核心与自动测试 | Windows主机测试保留26组；本轮实际结果见RK3588_ISP_TEST_REPORT.md |
 | 模型/事件/录像索引软件 | 已实现，使用内存 fixture；行为模型未提供 |
 | Linux V4L2、RGA、MPP、RKNN 目标程序 | 源码接线完成，SDK 编译/板端验证待完成 |
 | 双真实 Camera、ISP/3A、模型精度、24/72h长稳 | BLOCKED_HARDWARE |
 | MPP EOS/显式PTS/拆分输入输出线程、VFR容器时间轴 | PARTIAL，见适配清单 |
 
 
-## RKISP30 / RkAiq 软件控制层
+## RKISP输出采集本轮更新
+
+本轮重点补齐正式V4L2类的G_FMT回读、帧尺寸/间隔枚举、NV12/NV12M payload与Buffer错误清理；未扩展RkAiq抽象。主程序现在可以只传--isp-config，各路参数来自文件。新增isp_capture复用正式采集类，做有界单路NV12抓帧与元数据保存，再进入原双路Pipeline。
+
+四份交付：[实现](RK3588_ISP_IMPLEMENTATION.md)、[采集](RK3588_ISP_CAPTURE.md)、[双路](RK3588_DUAL_CAMERA.md)、[本轮测试](RK3588_ISP_TEST_REPORT.md)。当前主通路为MMAP→CPU打包→原RGA/MPP，不能当作已完成DMA-BUF导入/零拷贝。真实SDK与板端仍待验证。
+
+## RKISP30 / RkAiq 软件控制层（前轮框架）
 
 已复用AiqController、V4L2IspCamera、media_graph_validator和isp_control_cli，增加显式Sensor/ISP/output映射、IQ/所有权验证、可插拔backend、双路生命周期/回滚、readback与ISP健康观测。图像仍是RKISP输出NV12/NV12M；RkAiq是控制路径，Software ISP仍独立。
 
@@ -23,7 +29,7 @@
 ./build-host/isp_control_cli --camera-id 0 --list-controls --json
 ```
 
-当前external backend没有已核验IPC，控制命令非零退出；独立CLI不会接管Pipeline拥有的IN_PROCESS context。真实vendor API只允许从目标SDK头/示例实现，当前没有完成真实3A接通。详见[当前增量交付](Plan/RKISP/INCREMENTAL_CONTROL_REPORT.md)、[执行状态](docs/CODEX_EXECUTION_STATUS.md)和[板端验收](docs/RK3588_RKISP_BRINGUP.md)。本轮无硬件、模型精度或24小时板测结论。
+当前external backend没有已核验IPC，控制命令非零退出；独立CLI不会接管Pipeline拥有的IN_PROCESS context。真实vendor API只允许从目标SDK头/示例实现，当前没有完成真实3A接通。详见[前轮控制层交付](Plan/RKISP/INCREMENTAL_CONTROL_REPORT.md)、[执行状态](docs/CODEX_EXECUTION_STATUS.md)和[板端验收](docs/RK3588_RKISP_BRINGUP.md)。本轮无硬件、模型精度或24小时板测结论。
 
 ## 主链路
 
@@ -44,7 +50,7 @@ Windows 已安装 Visual Studio C++ 与 Windows SDK 时：
 powershell -ExecutionPolicy Bypass -File scripts/build_host_windows.ps1
 ```
 
-CMake >=3.16，C++17、Threads::Threads、GCC/Clang警告开关和 compile_commands.json；Windows 脚本 clean-first 避免本机旧依赖记录残留。主机测试不编译厂商视频实现。当前增量Windows/MSVC与ASan各26/26通过，8组各100次压力通过；当前代码a436b5f的Linux普通与ASan+UBSan各26/26通过，两个job各800次压力通过，见 [执行状态](docs/CODEX_EXECUTION_STATUS.md)。历史代码0017938的Linux普通与ASan+UBSan各25/25及800次压力记录保留在 [旧测试记录](Plan/RKISP/07_TEST_REPORT.md)，不作为本次增量证据。
+CMake >=3.16，C++17、Threads::Threads、GCC/Clang警告开关和 compile_commands.json；Windows脚本clean-first避免旧产物。本轮Windows普通/ASan各26/26通过；Linux额外编译真实V4L2和采集专用测试，结果见[本轮测试报告](RK3588_ISP_TEST_REPORT.md)。主机测试不编译厂商myDemo。前轮控制层与视频/AI结果保留在Plan历史报告，不当本轮证据。
 
 ## BSP 构建和运行
 

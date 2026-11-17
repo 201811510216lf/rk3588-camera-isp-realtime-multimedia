@@ -15,6 +15,43 @@ class ThrowingInspector final : public isp::IMediaGraphInspector {
         throw std::runtime_error("unexpected query");
     }
 };
+// Existing offline fixtures exercise when negotiation may occur; no product Camera or SDK fake.
+class NegotiationInspector final : public isp::IMediaGraphInspector {
+  public:
+    bool negotiated = false;
+    bool invalid_route = false;
+    bool wrong_node = false;
+    size_t graph_reads = 0, output_reads = 0;
+    bool inspect(const std::string &device, const std::string &path, isp::IspDeviceInfo *output,
+                 std::string *error) override {
+        ++graph_reads;
+        if (!reader.inspect(device, path, output, error))
+            return false;
+        if (invalid_route)
+            for (auto &link : output->links)
+                link.enabled = false;
+        return true;
+    }
+    bool query_output(const std::string &node, const std::string &path, isp::IspOutputNode *output,
+                      std::string *error) override {
+        ++output_reads;
+        if (!reader.query_output(node, path, output, error))
+            return false;
+        if (!negotiated) {
+            // Driver defaults can differ before V4L2 S_FMT/G_FMT and S_PARM/G_PARM.
+            output->width = 1280;
+            output->height = 720;
+            output->fps_numerator = 25;
+            output->active_format = "YUYV";
+        }
+        if (wrong_node)
+            output->video_node = "/dev/wrong-output";
+        return true;
+    }
+
+  private:
+    isp::ReadOnlyMediaGraphInspector reader;
+};
 class ThrowingProvider final : public isp::IspReadinessProvider {
   public:
     isp::IspControlResult before_stream() override {
@@ -126,6 +163,29 @@ int main() {
     capture.nodes[1] = "/dev/video47";
     capture.fps = 25;
     assert(!isp::validate_capture_binding(config, capture).ok());
+    auto independent_sizes = config;
+    independent_sizes.cameras[1].width = 1280;
+    independent_sizes.cameras[1].height = 720;
+    independent_sizes.cameras[1].fps = 25;
+    // Omitted capture values inherit each entry, including differing independent-camera layouts.
+    isp::CaptureBinding inherited;
+    assert(isp::validate_capture_binding(independent_sizes, inherited).ok());
+    inherited.nodes[0] = "/dev/video42";
+    assert(isp::validate_capture_binding(independent_sizes, inherited).ok());
+    inherited.nodes[1] = "/dev/wrong";
+    assert(!isp::validate_capture_binding(independent_sizes, inherited).ok());
+    inherited.nodes[1].clear();
+    inherited.width = 640;
+    assert(!isp::validate_capture_binding(independent_sizes, inherited).ok());
+    inherited.width = 0;
+    inherited.height = 480;
+    assert(!isp::validate_capture_binding(independent_sizes, inherited).ok());
+    inherited.height = 0;
+    inherited.fps = 30;
+    assert(!isp::validate_capture_binding(independent_sizes, inherited).ok());
+    inherited.fps = 0;
+    inherited.pixel_format = "NV12";
+    assert(!isp::validate_capture_binding(independent_sizes, inherited).ok());
     isp::IspPipelineCoordinator strict(config);
     assert(!strict.before_stream().ok());
     assert(!strict.before_stream().ok());
@@ -145,6 +205,53 @@ int main() {
     assert(offline.after_stream_stop().ok());
     assert(offline.after_stream_stop().ok());
     assert(offline.after_stream().status == isp::ControlStatus::InvalidState);
+
+    auto negotiating_inspector = std::make_unique<NegotiationInspector>();
+    auto *negotiating = negotiating_inspector.get();
+    isp::IspPipelineCoordinator negotiate(config, std::move(negotiating_inspector));
+    const auto pre_negotiation = negotiate.before_stream();
+    assert(pre_negotiation.ok() && !pre_negotiation.hardware_confirmed);
+    assert(negotiating->graph_reads == 2 && negotiating->output_reads == 2);
+    assert(!negotiate.status(0).hardware_confirmed); // Offline data never creates live readiness.
+    negotiating->negotiated = true; // Represents Camera open/format negotiation, without real ioctls.
+    assert(negotiate.after_stream().ok());
+    assert(negotiating->graph_reads == 4 && negotiating->output_reads == 4);
+    assert(!negotiate.status(0).hardware_confirmed);
+    assert(negotiate.before_stream_stop().ok() && negotiate.after_stream_stop().ok());
+
+    auto unchanged_inspector = std::make_unique<NegotiationInspector>();
+    auto *unchanged = unchanged_inspector.get();
+    isp::IspPipelineCoordinator still_wrong(config, std::move(unchanged_inspector));
+    assert(still_wrong.before_stream().ok());
+    assert(still_wrong.after_stream().status == isp::ControlStatus::ConfigMismatch);
+    assert(unchanged->graph_reads == 4 && unchanged->output_reads == 4);
+    assert(still_wrong.before_stream_stop().ok() && still_wrong.after_stream_stop().ok());
+
+    size_t invalid_factories = 0;
+    auto count_factory = [&](const isp::AiqCameraConfig &,
+                             const isp::OwnershipEvidence &) -> std::unique_ptr<isp::IRkAiqBackend> {
+        ++invalid_factories;
+        return isp::create_unavailable_backend();
+    };
+    auto invalid_route = std::make_unique<NegotiationInspector>();
+    invalid_route->invalid_route = true;
+    isp::IspPipelineCoordinator bad_route(config, std::move(invalid_route), count_factory);
+    assert(bad_route.before_stream().status == isp::ControlStatus::ConfigMismatch);
+    assert(invalid_factories == 0);
+    assert(bad_route.shutdown().ok());
+    auto wrong_node = std::make_unique<NegotiationInspector>();
+    wrong_node->wrong_node = true;
+    isp::IspPipelineCoordinator bad_node(config, std::move(wrong_node), count_factory);
+    assert(bad_node.before_stream().status == isp::ControlStatus::ConfigMismatch);
+    assert(invalid_factories == 0);
+    assert(bad_node.shutdown().ok());
+    auto raw_config = config;
+    raw_config.cameras[0].pixel_format = "RAW10";
+    isp::IspPipelineCoordinator raw_target(raw_config, std::make_unique<NegotiationInspector>(),
+                                           count_factory);
+    assert(raw_target.before_stream().status == isp::ControlStatus::InvalidArgument);
+    assert(invalid_factories == 0);
+    assert(raw_target.shutdown().ok());
 
     isp::IspPipelineCoordinator broken_discovery(config, std::make_unique<ThrowingInspector>());
     const auto discovery_failure = broken_discovery.before_stream();

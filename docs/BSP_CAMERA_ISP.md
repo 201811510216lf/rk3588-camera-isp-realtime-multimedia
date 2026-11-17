@@ -33,3 +33,7 @@
 图JSON包含Sensor实体、entity/pad/link、启用路径、配置ISP实体与NV12/NV12M平面/stride/FPS。MIPI/CIF/ISP/Mainpath/Selfpath角色标明来自报告function或名称提示；名称提示不授权映射或READY。离线图只验证结构，`hardware_confirmed=false`且`isp_3a_ready=NOT_MEASURED`。Capture格式和FPS不再从Video Output段取值。
 
 控制层失败回读会清除旧确认；不确定生命周期进入需清理状态。Manager在部分关闭或关闭失败后禁止启动剩余phase，每路`query_all`分别保留状态/错误。协调器先完成所有Camera发现，再创建backend；回调异常变为结构化错误。运行期Error、严格模式失去硬件确认会停止采集；显式诊断仍保留未验证/降级标记。AE/AWB、IQ匹配、实际服务所有权和BSP启动顺序必须在目标SDK/开发板验收。
+
+## 当前V4L2采集增量
+
+当前任务转向真实NV12/NV12M采集。V4L2IspCamera保留MMAP、可选EXPBUF和共享lease，补齐G_FMT/有理数帧间隔、平面/payload及失败释放；未增加RkAiq Fake或重复接口。每路配置不再被全局默认值覆盖，协商前只作映射/控制准备，STREAMON后重新检查活动输出。先用isp_capture做有界单路抓帧，再运行原DualCameraPipeline。上述前轮结果为历史；本轮结果与SDK/板端边界见[新测试报告](../RK3588_ISP_TEST_REPORT.md)，操作见[采集](../RK3588_ISP_CAPTURE.md)与[双路](../RK3588_DUAL_CAMERA.md)。

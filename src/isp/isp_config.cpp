@@ -115,7 +115,7 @@ IspControlResult validate_config(const IspConfig &config) {
         if (camera.pixel_format != "NV12" && camera.pixel_format != "NV12M")
             return invalid("product ISP output must be NV12 or NV12M, never a RAW node");
         if (!camera.width || !camera.height || (camera.width & 1U) || (camera.height & 1U) ||
-            camera.width > 16384 || camera.height > 16384 || camera.fps > 1000)
+            camera.width > 16384 || camera.height > 16384 || !camera.fps || camera.fps > 1000)
             return invalid("invalid ISP output dimensions or requested FPS");
         if (camera.working_mode != IspWorkingMode::Normal && camera.working_mode != IspWorkingMode::Hdr2 &&
             camera.working_mode != IspWorkingMode::Hdr3)
@@ -303,8 +303,9 @@ IspControlResult load_isp_config(const std::string &path, IspConfig *config) {
     if (!version)
         return invalid("version: 1 is required");
     for (const auto &keys : camera_keys)
-        for (const auto *key : {"camera_id", "media_device", "sensor_entity", "expected_isp_entity",
-                                "video_node", "pixel_format", "width", "height", "ownership", "working_mode"})
+        for (const auto *key :
+             {"camera_id", "media_device", "sensor_entity", "expected_isp_entity", "video_node",
+              "pixel_format", "width", "height", "fps", "ownership", "working_mode"})
             if (!keys.count(key))
                 return invalid(std::string("camera entry missing required key: ") + key);
     const auto base = std::filesystem::absolute(std::filesystem::path(path)).parent_path();

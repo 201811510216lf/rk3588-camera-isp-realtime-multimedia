@@ -72,6 +72,8 @@ void test_cli_validation() {
     assert(options.device == "/dev/video7");
     assert(options.width == 1280 && options.height == 720);
     assert(!options.ai_enable);
+    assert(options.input_width_set && options.input_height_set);
+    assert(!options.input_fps_set && !options.input_pixel_format_set);
 
     const char *bad_args[] = {"myDemo", "--source=bad"};
     assert(!parse_app_options(2, const_cast<char **>(bad_args), &options, &help, &error));
@@ -134,6 +136,24 @@ void test_cli_validation() {
     assert(parse_app_options(7, const_cast<char **>(isp_args), &options, &help, &error));
     assert(options.strict_isp_ready && !options.allow_unverified_isp &&
            options.isp_config_path == "board.yaml");
+    // Input defaults must not override per-camera values from the configuration file.
+    const char *config_only_args[] = {"myDemo", "--isp-config", "board.yaml"};
+    assert(parse_app_options(3, const_cast<char **>(config_only_args), &options, &help, &error));
+    assert(options.device0.empty() && options.device1.empty());
+    assert(!options.input_width_set && !options.input_height_set && !options.input_fps_set &&
+           !options.input_pixel_format_set);
+    const char *explicit_defaults[] = {
+        "myDemo",   "--isp-config=board.yaml", "--input-width=1920", "--input-height=1080",
+        "--fps=30", "--pixel-format=auto"};
+    assert(parse_app_options(6, const_cast<char **>(explicit_defaults), &options, &help, &error));
+    assert(options.input_width_set && options.input_height_set && options.input_fps_set &&
+           options.input_pixel_format_set);
+    const char *partial_nodes[] = {"myDemo", "--isp-config=board.yaml", "--camera1=/dev/video35"};
+    assert(parse_app_options(3, const_cast<char **>(partial_nodes), &options, &help, &error));
+    assert(options.device0.empty() && options.device1 == "/dev/video35");
+    const char *duplicate_nodes[] = {"myDemo", "--isp-config=board.yaml", "--camera0=/dev/video35",
+                                     "--camera1=/dev/video35"};
+    assert(!parse_app_options(4, const_cast<char **>(duplicate_nodes), &options, &help, &error));
     const char *diagnostic_args[] = {"myDemo",    "--camera0",    "/dev/video10",
                                      "--camera1", "/dev/video11", "--allow-unverified-isp"};
     assert(parse_app_options(6, const_cast<char **>(diagnostic_args), &options, &help, &error));

@@ -91,7 +91,7 @@ bool bool_option(const std::string &arg, const char *name, int *index, int argc,
 void print_app_help(const char *program_name) {
     std::cout << "Usage: " << program_name << " [options]\n"
               << "  --source=mipi                retained source selector\n"
-              << "  --camera0 PATH --camera1 PATH  independent V4L2 ISP NV12 nodes\n"
+              << "  --camera0 PATH --camera1 PATH  optional with --isp-config; overrides must match mapping\n"
               << "  --pixel-format auto|NV12|NV12M --capture-buffers N (at least 2)\n"
               << "  --video-mode joint|independent  independent recording never waits for pairing\n"
               << "  --input-width N --input-height N --fps N\n"
@@ -123,6 +123,15 @@ bool parse_app_options(int argc, char **argv, AppOptions *options, bool *show_he
             *show_help = true;
             continue;
         }
+        const auto key = arg.substr(0, arg.find('='));
+        if (key == "--input-width" || key == "--width")
+            options->input_width_set = true;
+        if (key == "--input-height" || key == "--height")
+            options->input_height_set = true;
+        if (key == "--fps")
+            options->input_fps_set = true;
+        if (key == "--pixel-format")
+            options->input_pixel_format_set = true;
         std::string value;
         auto string_option = [&](const char *name, std::string *target) -> bool {
             if (arg != name && arg.rfind(std::string(name) + "=", 0) != 0)
@@ -329,8 +338,9 @@ bool parse_app_options(int argc, char **argv, AppOptions *options, bool *show_he
         *error = "use strict ISP readiness or explicit --allow-unverified-isp diagnostic mode";
         return false;
     }
-    if (options->device0.empty() || options->device1.empty() || options->device0 == options->device1) {
-        *error = "--camera0 and --camera1 must specify distinct RKISP output nodes";
+    if ((options->isp_config_path.empty() && (options->device0.empty() || options->device1.empty())) ||
+        (!options->device0.empty() && options->device0 == options->device1)) {
+        *error = "provide --isp-config or specify distinct RKISP output nodes with --camera0 and --camera1";
         return false;
     }
     if (options->capture_buffer_count < 2 || options->capture_buffer_count > 64) {

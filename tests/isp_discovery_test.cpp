@@ -155,6 +155,9 @@ int main() {
         single_text + "\nStream Parameters Video Capture:\n    Frames per second: 30.000 (30/1)\n",
         "/dev/video42", &single, &error));
     auto invalid = config;
+    invalid.cameras[0].fps = 0;
+    assert(!isp::validate_config(invalid).ok());
+    invalid = config;
     invalid.cameras[1].camera_id = 0;
     assert(!isp::validate_config(invalid).ok());
     invalid = config;
@@ -194,6 +197,7 @@ int main() {
          {good_yaml + "unknown_field: 1\n", good_yaml + "version: 1\n",
           replace(good_yaml, "camera_id: 1", "camera_id: -1"),
           replace(good_yaml, "width: 640", "width: 640\n    width: 640"),
+          replace(good_yaml, "    fps: 30\n", ""), replace(good_yaml, "fps: 30", "fps: 0"),
           replace(good_yaml, "working_mode: NORMAL", "working_mode: HDR9"),
           replace(good_yaml, "pixel_format: NV12", "pixel_format: [NV12]"),
           replace(good_yaml, "media_device: /dev/media19", "media_device: \"unterminated")}) {

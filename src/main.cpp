@@ -48,6 +48,10 @@ int main(int argc, char **argv) {
     pipeline_config.output_width = options.output_width;
     pipeline_config.output_height = options.output_height;
     pipeline_config.fps = options.fps;
+    pipeline_config.input_width_set = options.input_width_set;
+    pipeline_config.input_height_set = options.input_height_set;
+    pipeline_config.input_fps_set = options.input_fps_set;
+    pipeline_config.input_pixel_format_set = options.input_pixel_format_set;
     pipeline_config.capture_buffer_count = options.capture_buffer_count;
     pipeline_config.pixel_format = options.pixel_format;
     pipeline_config.video_mode = options.video_mode;

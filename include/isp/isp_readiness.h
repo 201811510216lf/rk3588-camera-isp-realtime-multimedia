@@ -14,6 +14,7 @@ struct IspReadiness {
     bool diagnostic_unverified = false;
 };
 struct CaptureBinding {
+    // Empty nodes and zero dimensions/FPS defer to the ISP file. Nonzero values are explicit checks.
     std::array<std::string, 2> nodes;
     uint32_t width = 0, height = 0, fps = 0;
     std::string pixel_format = "auto";

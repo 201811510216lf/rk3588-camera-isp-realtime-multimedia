@@ -85,6 +85,86 @@ void layout_and_lifetime() {
     assert(requeues == 1);
 }
 
+void shared_frame_shutdown() {
+    uint8_t payload = 0;
+    unsigned returned = 0, destroyed = 0;
+    auto owner = std::shared_ptr<int>(new int(1), [&](int *mapped) {
+        ++destroyed;
+        delete mapped;
+    });
+    std::weak_ptr<int> mapped_owner = owner;
+    auto state = std::make_shared<camera::BufferLeaseState>([&](uint32_t index) {
+        assert(index == 7 && !mapped_owner.expired());
+        ++returned;
+    });
+    assert(state->acquire(7));
+    camera::CameraFrame frame;
+    frame.desc.data = &payload;
+    frame.owner = owner;
+    frame.lease = std::make_shared<camera::FrameLease>(state, 7, owner);
+    BoundedFrameQueue<camera::CameraFrame> ai(1, QueuePolicy::DROP_OLDEST);
+    FramePairer pairer;
+    FrameSample pending;
+    pending.camera_id = 0;
+    pending.sequence = 1;
+    pending.timestamp_ns = 100;
+    pending.arrival_ns = 100;
+    pending.clock_domain = FrameClockDomain::Monotonic;
+    pending.frame = frame;
+    assert(ai.push(frame));
+    assert(pairer.push(std::move(pending), 100).empty());
+    frame = {};
+    owner.reset();
+    assert(returned == 0 && destroyed == 0 && state->in_flight() == 1);
+
+    // Queue close only stops producers; a consumer may still be reading the
+    // accepted CameraFrame while the other branch drops its pending sample.
+    ai.close();
+    camera::CameraFrame consumer;
+    assert(ai.pop(consumer) && consumer.valid());
+    pairer.clear();
+    assert(pairer.pending(0) == 0 && ai.size() == 0);
+    assert(returned == 0 && destroyed == 0 && !state->wait_for_zero(0ms));
+    consumer = {};
+    assert(returned == 1 && destroyed == 1 && mapped_owner.expired());
+    assert(state->wait_for_zero(0ms));
+
+    // During Camera shutdown both branches must release their shared lease,
+    // but no slot may be queued after stop_accepting(). Retaining only the
+    // lease must still keep the mappings alive after CameraFrame::owner goes.
+    returned = destroyed = 0;
+    owner = std::shared_ptr<int>(new int(2), [&](int *mapped) {
+        ++destroyed;
+        delete mapped;
+    });
+    mapped_owner = owner;
+    state = std::make_shared<camera::BufferLeaseState>([&](uint32_t) { ++returned; });
+    assert(state->acquire(8));
+    frame.desc.data = &payload;
+    frame.owner = owner;
+    frame.lease = std::make_shared<camera::FrameLease>(state, 8, owner);
+    auto lease_only = frame.lease;
+    BoundedFrameQueue<camera::CameraFrame> ai_shutdown(1);
+    BoundedFrameQueue<camera::CameraFrame> record_shutdown(1);
+    assert(ai_shutdown.push(frame) && record_shutdown.push(frame));
+    frame = {};
+    owner.reset();
+    state->stop_accepting();
+    assert(!state->acquire(9));
+    ai_shutdown.close();
+    record_shutdown.close();
+    assert(ai_shutdown.pop(consumer));
+    consumer = {};
+    assert(returned == 0 && destroyed == 0 && !mapped_owner.expired());
+    assert(record_shutdown.pop(consumer));
+    consumer = {};
+    assert(returned == 0 && destroyed == 0 && !mapped_owner.expired());
+    assert(!state->wait_for_zero(0ms));
+    lease_only.reset();
+    assert(returned == 0 && destroyed == 1 && mapped_owner.expired());
+    assert(state->wait_for_zero(0ms));
+}
+
 void policies_and_close() {
     int v = 0;
     BoundedFrameQueue<int> oldest(2, QueuePolicy::DROP_OLDEST);
@@ -194,9 +274,11 @@ void bounded_pair_metrics() {
 } // namespace
 int main() {
     layout_and_lifetime();
+    shared_frame_shutdown();
     policies_and_close();
     queue_stress();
     bounded_pair_metrics();
-    std::cout << "camera_queue_test: PASS (NV12/NV12M, leases, four policies, close, 64000 threaded "
+    std::cout << "camera_queue_test: PASS (NV12/NV12M, shared leases/shutdown, four policies, close, 64000 "
+                 "threaded "
                  "transfers, rolling pairing)\n";
 }

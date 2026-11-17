@@ -27,3 +27,7 @@ flowchart LR
 `IspPipelineCoordinator`先完成全部发现，再调用backend factory，按BSP before/after STREAMON阶段推进；阶段不能重复或倒序，stop幂等。`DualCameraPipeline`继续使用原有V4L2IspCamera与FramePairer，只在已有管理边界调用受异常保护的readiness操作。运行期状态查询拒绝错误Camera、未知owner、Error或严格模式失去确认；采集线程不执行AIQ初始化/控制。
 
 两套CLI入口复用`src/isp/isp_cli.cpp`。Media Graph结构化JSON由同一个validator生成；角色提示只解释拓扑，映射依据仍是显式Sensor/ISP/output及启用路径。SDK版本只由backend报告，缺SDK/IPC的控制为非零失败。真SDK adapter必须由目标头/库实现并经过CMake编译链接probe；当前没有提供，真实SDK与板端仍BLOCKED_HARDWARE。
+
+## 当前采集增量
+
+V4L2IspCamera仍是唯一正式Camera采集实现：MMAP→DQBUF/共享lease→原AI/录像队列与FramePairer。G_FMT决定实际布局，NV12M独立Y/UV按有效行打包，主链路目前有CPU复制，EXPBUF FD未导入下游。新isp_capture只复用同一类做单路诊断，不增加产品输入。ISP文件逐路参数进入Camera，未指定CLI参数不覆盖文件；Joint要求可配对的尺寸/实际帧间隔，Independent按每路帧布局与CFR处理。readiness在协商前准备、协商后重新核验活动输出；控制和采集线程职责不变。详见[本轮实现](../RK3588_ISP_IMPLEMENTATION.md)与[测试](../RK3588_ISP_TEST_REPORT.md)。
