@@ -4,7 +4,7 @@
 
 | 验证层 | 当前状态 |
 |---|---|
-| C++17 软件核心与自动测试 | Windows主机测试保留26组；本轮实际结果见RK3588_ISP_TEST_REPORT.md |
+| C++17 软件核心与自动测试 | Windows普通/ASan各26/26；Linux普通/ASan+UBSan各28/28，见本轮报告 |
 | 模型/事件/录像索引软件 | 已实现，使用内存 fixture；行为模型未提供 |
 | Linux V4L2、RGA、MPP、RKNN 目标程序 | 源码接线完成，SDK 编译/板端验证待完成 |
 | 双真实 Camera、ISP/3A、模型精度、24/72h长稳 | BLOCKED_HARDWARE |
@@ -50,7 +50,7 @@ Windows 已安装 Visual Studio C++ 与 Windows SDK 时：
 powershell -ExecutionPolicy Bypass -File scripts/build_host_windows.ps1
 ```
 
-CMake >=3.16，C++17、Threads::Threads、GCC/Clang警告开关和 compile_commands.json；Windows脚本clean-first避免旧产物。本轮Windows普通/ASan各26/26通过；Linux额外编译真实V4L2和采集专用测试，结果见[本轮测试报告](RK3588_ISP_TEST_REPORT.md)。主机测试不编译厂商myDemo。前轮控制层与视频/AI结果保留在Plan历史报告，不当本轮证据。
+CMake >=3.16，C++17、Threads::Threads、GCC/Clang警告开关和 compile_commands.json；Windows脚本clean-first避免旧产物。本轮Windows普通/ASan各26/26、Linux普通/ASan+UBSan各28/28通过，三套压力运行各800次通过；Linux额外编译真实V4L2和采集专用测试，结果见[本轮测试报告](RK3588_ISP_TEST_REPORT.md)。主机测试不编译厂商myDemo。前轮控制层与视频/AI结果保留在Plan历史报告，不当本轮证据。
 
 ## BSP 构建和运行
 

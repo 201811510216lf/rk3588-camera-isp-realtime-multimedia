@@ -13,4 +13,4 @@
 | DMA-BUF与缓存 | MMAP+可选EXPBUF，当前CPU打包 | 未实现外部分配/DMABUF导入，不声称零拷贝 |
 | SDK/模型/板端/24h | 待提供环境与验收 | BLOCKED_HARDWARE |
 
-本轮Windows普通与ASan各26/26通过，最终Linux证据及交付文件见[测试报告](../RK3588_ISP_TEST_REPORT.md)。整体视频/AI功能历史保留在[Plan项目状态](../Plan/PROJECT_STATUS.md)，不得把主机fixture等同于真实图像/行为/长稳结论。
+本轮Windows普通与ASan各26/26通过；Linux普通与ASan+UBSan各28/28通过，Windows及两个Linux job各800次压力通过。Linux证据及交付文件见[测试报告](../RK3588_ISP_TEST_REPORT.md)。整体视频/AI功能历史保留在[Plan项目状态](../Plan/PROJECT_STATUS.md)，不得把主机fixture等同于真实图像/行为/长稳结论。

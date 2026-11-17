@@ -27,3 +27,35 @@ External Service模式不执行init/start/stop/deinit；进程被发现不等于
 ## 参考依据
 
 仅参考[RK-MediaProject](https://github.com/JoeChen2me/RK-MediaProject)的Camera职责、ioctl和线程/队列管理方式，没有复制其USB MJPEG业务或第三方二进制。API行为核对[Linux MMAP文档](https://docs.kernel.org/userspace-api/media/v4l/mmap.html)、[S_FMT/G_FMT文档](https://docs.kernel.org/userspace-api/media/v4l/vidioc-g-fmt.html)。
+
+## 实际修改文件
+
+本轮共修改/新增27个文件（不含生成目录）：
+
+- `CMakeLists.txt`
+- `README.md`
+- `RK3588_DUAL_CAMERA.md`
+- `RK3588_ISP_CAPTURE.md`
+- `RK3588_ISP_IMPLEMENTATION.md`
+- `RK3588_ISP_TEST_REPORT.md`
+- `docs/BSP_CAMERA_ISP.md`
+- `docs/CODEX_EXECUTION_STATUS.md`
+- `docs/CURRENT_ARCHITECTURE.md`
+- `docs/PROJECT_STATUS.md`
+- `include/app_options.h`
+- `include/dual_camera_pipeline.h`
+- `include/isp/isp_readiness.h`
+- `include/v4l2_isp_camera.h`
+- `src/app_options.cpp`
+- `src/dual_camera_pipeline.cpp`
+- `src/isp/isp_config.cpp`
+- `src/isp/isp_readiness.cpp`
+- `src/main.cpp`
+- `src/v4l2_isp_camera.cpp`
+- `tests/camera_lifecycle_test.cpp`
+- `tests/camera_queue_test.cpp`
+- `tests/isp_discovery_test.cpp`
+- `tests/isp_readiness_test.cpp`
+- `tests/test_isp_capture_cli.py`
+- `tests/v4l2_capture_test.cpp`
+- `tools/isp_capture.cpp`
