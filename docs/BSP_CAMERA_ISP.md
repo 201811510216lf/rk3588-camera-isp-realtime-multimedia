@@ -9,7 +9,7 @@
 - isp-health.jsonl记录服务观测、真实采集心跳、首帧/后续stall、FPS/sequence gap、状态和错误；capture worker不做AIQ初始化。恢复状态NOT_IMPLEMENTED。
 - probe只读；capture脚本为明确请求的有界采集；sample_aiq_status与离线分析保留来源、不覆盖既有证据，不填虚构3A/质量/收敛结果。
 
-当前增量Windows普通与AddressSanitizer各26/26CTest通过，8组各100次压力测试通过；真实SDK编译和双真实Camera未验证。本轮实际结果见[执行状态](CODEX_EXECUTION_STATUS.md)与[增量报告](../Plan/RKISP/INCREMENTAL_CONTROL_REPORT.md)。原25组测试及SDK接入约束保留在[历史测试报告](../Plan/RKISP/07_TEST_REPORT.md)、[SDK矩阵](../Plan/RKISP/07_BUILD_MATRIX.md)。
+当前增量Windows普通与AddressSanitizer各26/26CTest通过，8组各100次压力测试通过。代码a436b5f的Linux普通与ASan+UBSan也各26/26及800次压力通过；真实SDK编译和双真实Camera未验证。本轮实际结果见[执行状态](CODEX_EXECUTION_STATUS.md)与[增量报告](../Plan/RKISP/INCREMENTAL_CONTROL_REPORT.md)。原25组测试及SDK接入约束保留在[历史测试报告](../Plan/RKISP/07_TEST_REPORT.md)、[SDK矩阵](../Plan/RKISP/07_BUILD_MATRIX.md)。
 
 板端15项验收与带占位符命令见[RK3588 RKISP Bringup](RK3588_RKISP_BRINGUP.md)。新配置示例[isp_config.example.yaml](../configs/isp/isp_config.example.yaml)仅结构说明；本轮没有确认Sensor型号或IQ文件，旧IMX415实验配置不代表当前硬件身份。
 

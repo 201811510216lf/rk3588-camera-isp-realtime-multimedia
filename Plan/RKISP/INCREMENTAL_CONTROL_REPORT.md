@@ -16,10 +16,10 @@
 
 Windows/MSVC Debug clean build：26/26CTest通过（3.17秒）。MSVC ASan独立目录clean build：26/26通过（24.44秒），无ASan报告。8组压力各重复100次，共800次通过（41.64秒）。包含扩展Fake生命周期/双路/失败回读、readiness异常/运行期故障、映射/输出作用域、CLI10项、Media Graph CLI3项及SDK8项检测。新JSON CLI测试直接调用已构建exe，不把fixture当运行Camera。
 
-修改C++统一clang-format并dry-run核验。上传后Linux结果会在完成后追加；不把旧CI或未执行检查写作本轮成功。源码/SDK/实机证据分别列在docs/CODEX_EXECUTION_STATUS.md与docs/PROJECT_STATUS.md。
+修改C++统一clang-format并dry-run核验。代码提交a436b5f的[Linux CI](https://github.com/201811510216lf/rk3588-camera-isp-realtime-multimedia/actions/runs/44050907261)已通过：V4L2 ON普通26/26（0.78秒）、800次压力（16.18秒）；ASan+UBSan 26/26（4.67秒）、800次压力（112.07秒），没有sanitizer报告。不把旧CI或未执行检查写作本轮成功。源码/SDK/实机证据分别列在docs/CODEX_EXECUTION_STATUS.md与docs/PROJECT_STATUS.md。
 
 ## 未完成的硬件部分
 
 当前RKAIQ_ROOT/INCLUDE_DIR/LIBRARIES/ADAPTER_SOURCE均未提供，无实际BSP头/库/示例或Sensor/IQ。真实Backend仍SDK_BACKEND_MISSING/BLOCKED_HARDWARE；所有rk_aiq_*签名必须从目标SDK核验后编写port。ExternalService没有合法IPC则控制UNSUPPORTED；InProcess不允许抢占IspServer。真实RKISP30、SDK/myDemo编译、控制生效、Camera group及24h/72h均未验收。
 
-文件清单见INCREMENTAL_CHANGED_FILES.txt。板端步骤见../../docs/RK3588_RKISP_BRINGUP.md。本轮完成后按用户要求以普通提交推送GitHub main，不覆盖远端历史。
+文件清单见INCREMENTAL_CHANGED_FILES.txt。板端步骤见../../docs/RK3588_RKISP_BRINGUP.md。本轮代码已按用户要求以普通提交a436b5f推送GitHub main，最后文档提交补充CI结果，不覆盖远端历史。

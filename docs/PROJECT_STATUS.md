@@ -11,7 +11,9 @@
 | SDK版本状态 | 版本/来源/availability可查询 | 无真实SDK为UNKNOWN/NOT_MEASURED，不能当检测到某版本 |
 | MediaGraph / Mainpath / Selfpath | 结构化映射与角色提示已实现 | 名称提示非权威，Sensor实体/启用路径+NV12布局才是映射证据 |
 | Pipeline ISP启动/运行/停止 | 已增量接入与host policy测试 | 厂商myDemo未在本机SDK编译，Capture线程不做AIQ初始化 |
-| 主机完整测试 / ASan | 各26/26通过 | Fake/离线不等于实机 |
+| Windows普通 / ASan，Linux普通 / ASan+UBSan | 各26/26通过；Windows及两个Linux job各800次压力通过 | Fake/离线不等于实机 |
 | 真实SDK编译 / 板端 / 24h | BLOCKED_HARDWARE | 缺BSP/SDK/Sensor/IQ/开发板 |
 
 本次没有实现未知SDK函数、IspServer IPC或camera-group API。没有硬编码设备编号、改动DTS/I2C/media link、重启服务或用Fake替代真实运行。更多证据见[执行状态](CODEX_EXECUTION_STATUS.md)。历史视频/AI与ISP交付报告保留在[Plan项目记录](../Plan/PROJECT_STATUS.md)。
+
+本轮代码已上传GitHub main：`a436b5f`，其[Linux CI](https://github.com/201811510216lf/rk3588-camera-isp-realtime-multimedia/actions/runs/44050907261)全部通过。最终仅文档提交补充结果；完整修改清单与计时见执行状态及增量报告。

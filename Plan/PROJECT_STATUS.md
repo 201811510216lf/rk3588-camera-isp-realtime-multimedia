@@ -29,3 +29,5 @@
 ## 当前main增量
 
 基于7376c5a再次补强既有控制层：生命周期故障锁定、双路phase与query_all、readiness异常/运行期失效、Sensor拓扑JSON、共用CLI查询与SDK负例检测。Windows/MSVC与ASan各26/26通过，8组各100次压力通过。当前增量状态见[docs/PROJECT_STATUS](../docs/PROJECT_STATUS.md)、[执行证据](../docs/CODEX_EXECUTION_STATUS.md)与[增量报告](RKISP/INCREMENTAL_CONTROL_REPORT.md)。真实SDK和板端仍BLOCKED_HARDWARE。
+
+当前增量代码a436b5f的[GitHub Linux普通/ASan+UBSan CI](https://github.com/201811510216lf/rk3588-camera-isp-realtime-multimedia/actions/runs/44050907261)各26/26通过，各800次压力通过。SDK/厂商myDemo/板端状态未因此升级。
