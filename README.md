@@ -44,7 +44,7 @@ Windows 已安装 Visual Studio C++ 与 Windows SDK 时：
 powershell -ExecutionPolicy Bypass -File scripts/build_host_windows.ps1
 ```
 
-CMake >=3.16，C++17、Threads::Threads、GCC/Clang警告开关和 compile_commands.json；Windows 脚本 clean-first 避免本机旧依赖记录残留。主机测试不编译厂商视频实现。本轮ISP专项完成Windows及MSVC ASan验证；既有Linux CI仅是上一提交的历史证据，未当作本轮结果。真实执行结果见 [测试记录](Plan/RKISP/07_TEST_REPORT.md)。
+CMake >=3.16，C++17、Threads::Threads、GCC/Clang警告开关和 compile_commands.json；Windows 脚本 clean-first 避免本机旧依赖记录残留。主机测试不编译厂商视频实现。本轮ISP专项完成Windows/MSVC ASan验证；代码0017938的Linux普通与ASan+UBSan CI也均25/25通过，各800次重复压力通过。真实执行结果见 [测试记录](Plan/RKISP/07_TEST_REPORT.md)。
 
 ## BSP 构建和运行
 

@@ -23,3 +23,5 @@
 原先RkAiq“仅接口”边界已扩展为完整软件控制框架、显式所有权/IQ/生命周期/双路回滚、readiness gating和ISP健康层。默认外部模式只发现，IN_PROCESS仍需真实SDK API port，未声称硬件3A已接通。
 
 本轮Windows/Ninja完整25/25、MSVC ASan25/25、ISP四组各100次压力通过；旧LinuxCI不是本轮结果。真实目标SDK/myDemo编译、RKISP30/3A、Sensor/IQ与24/72h仍BLOCKED_HARDWARE，详见[专项交付](RKISP/FINAL_RKISP_DELIVERY_REPORT.md)。
+
+上传后新增验证：0017938的GitHub Linux普通与ASan+UBSan均25/25通过，各800次压力通过，见RKISP/07_TEST_REPORT.md。真实SDK与硬件状态不变。

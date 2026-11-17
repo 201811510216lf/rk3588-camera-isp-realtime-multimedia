@@ -11,3 +11,5 @@
 本次按用户授权交付至现有GitHub仓库的main分支，采用普通提交/推送，不强制覆盖远端历史。文件清单见CHANGED_FILES.txt，板端验收见../../docs/RK3588_RKISP_BRINGUP.md，待适配清单见FINAL_HARDWARE_BLOCKERS.md。没有删除模型/录像/独立实验成果，没有改内核、DTS、I2C、media link或系统服务。
 
 自动化复现补充：移除生成目录的ASan运行库后，使用更新的Windows脚本重新clean build并自动复制本机运行库，25/25CTest再次通过，16.87秒。没有依赖手工保留的DLL，也没有上传生成二进制。
+
+本次代码已推送GitHub main，代码提交0017938。其[Linux普通与ASan+UBSan CI](https://github.com/201811510216lf/rk3588-camera-isp-realtime-multimedia/actions/runs/44046706099)均25/25通过，各800次重复压力通过。新增验证是主机Linux证据，不是Rockchip SDK或板端验收。详细耗时见07_TEST_REPORT。

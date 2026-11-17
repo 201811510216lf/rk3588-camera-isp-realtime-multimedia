@@ -13,3 +13,14 @@
 边界：本地主机完整构建包含ISP软件核心、图解析、状态机、CLI及Fake测试，不包含依赖RGA/MPP/RKNN的myDemo。Pipeline接线经静态审查及独立readiness/binding测试，不能宣称厂商目标已编译。没有真实RKAIQ头/库/adapter、ISP/Sensor/IQ或/dev节点，真实SDK构建与板端运行BLOCKED_HARDWARE。
 
 自动化复现补充：移除生成目录的ASan运行库后，使用更新的Windows脚本重新clean build并自动复制本机运行库，25/25CTest再次通过，16.87秒。没有依赖手工保留的DLL，也没有上传生成二进制。
+
+## 本次上传后的Linux验证
+
+代码提交0017938的[GitHub Actions检查](https://github.com/201811510216lf/rk3588-camera-isp-realtime-multimedia/actions/runs/44046706099)已完成且结论success。ENABLE_V4L2=ON、ENABLE_RKAIQ=OFF，使用Linux系统头编译包括V4L2、POSIX图查询/所有权代码的主机软件；未使用Rockchip SDK。
+
+| 作业 | CTest | 8组各100次压力 |
+|---|---|---|
+| Linux普通 | 25/25通过，0.66秒 | 800次通过，13.94秒 |
+| Linux ASan+UBSan | 25/25通过，1.76秒 | 800次通过，66.00秒 |
+
+没有sanitizer报告。TSan未执行；厂商SDK/myDemo/真实RKISP30/Camera与3A验证仍为BLOCKED_HARDWARE。随后提交只更新本次上传及CI记录，源码与通过检查的0017938保持一致。
