@@ -11,3 +11,5 @@
 待完成：实际官方BSP的完整myDemo SDK编译、双真实Camera/3A、RGA完成边界、MPP显式PTS/EOS/拆分输入输出线程、保留采集间隔的VFR mux、真实RKNN模型/时序行为验证、Camera自动恢复、行为状态OSD、真实网络/MP4/事件关联验收、24/72h长稳。普通磁盘I/O无硬实时保证。事件录像关联为离线后处理。硬件适配见HARDWARE_ADAPTATION_ROADMAP.md。
 
 GitHub目标：201811510216lf/rk3588-camera-isp-realtime-multimedia 的main分支，采用普通提交和推送，不强制覆盖历史。最终提交与远程校验结果由交付消息给出。Linux CI如已运行，其结果追加在测试报告；不把主机构建视为板端验收。
+
+上传后Linux/GCC普通及ASan+UBSan两作业均通过：各18/18CTest、各400次重复压力。V4L2及Linux子进程代码得到主机编译验证，厂商SDK、真实Camera/模型/24h仍待实测。证据链接与耗时已追加在08_TEST_RESULTS。随后提交仅更新这些文档，无源码变更。

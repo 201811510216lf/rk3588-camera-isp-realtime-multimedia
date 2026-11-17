@@ -21,3 +21,14 @@
 构建保留部分原有数值转换/未使用参数警告（Software ISP/CompositeProcessor），没有将其报告为零警告构建。clang-tidy/独立静态分析工具未运行；完成多代理人工源码审查。Windows组合ASan/UBSan和TSan不可用；Linux自动化提供单独构建入口，远程结果需另列，不预先声称通过。
 
 BLOCKED_HARDWARE：真实V4L2/RKISP/RkAiq、厂商SDK编译、RGA/MPP/RKNN、真实MP4/服务器/ffprobe、模型精度、24/72h板测均未执行。源码中的硬件适配不等于硬件功能已验证。
+
+## GitHub Linux 远程验证
+
+代码提交5d92bef的[GitHub Actions运行](https://github.com/201811510216lf/rk3588-camera-isp-realtime-multimedia/actions/runs/44039654482)已完成并结论success。GNU15.2，ENABLE_V4L2=ON，使用真实Linux系统头编译了V4L2采集代码与Linux子进程实现（没有Camera设备或SDK）。
+
+| 作业 | 普通CTest | 每组100次压力（4组共400次） |
+|---|---|---|
+| Linux普通 | 18/18通过，0.37秒 | 全部通过，10.82秒 |
+| Linux ASan+UBSan | 18/18通过，1.55秒 | 全部通过，97.35秒 |
+
+没有sanitizer报告。TSan未执行；不能把ASan/UBSan覆盖写成TSan结论。Linux宿主编译仍不包含myDemo的厂商SDK路径，也没有执行真实FFmpeg网络/MP4或硬件验收。该验证后仅更新交付文档，未改动已通过检查的源码。

@@ -11,3 +11,5 @@
 | 编码/事件吞吐 | 成功包/最终事件计数 | 无编码器/NPU/24h性能数据 |
 
 本地主机18项CTest通过、4组各100次压力的实际时间见08_TEST_RESULTS。Standalone Software ISP smoke输出的simulated/measured_fps是PC无节流实验吞吐，不能推广为Camera或NPU FPS。未给出任何未经测量的实时帧率、模型准确率、零拷贝或24小时稳定性结论。
+
+远程Linux软件测试与ASan/UBSan压力耗时已记录在08_TEST_RESULTS；它们仍不是RK3588性能样本。

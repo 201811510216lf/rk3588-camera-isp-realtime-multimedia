@@ -4,7 +4,7 @@
 
 | 验证层 | 当前状态 |
 |---|---|
-| C++17 软件核心与自动测试 | Windows Ninja/MSVC clean build，18/18 CTest 通过 |
+| C++17 软件核心与自动测试 | Windows/MSVC与Linux/GCC（含ASan/UBSan），各18/18通过 |
 | 模型/事件/录像索引软件 | 已实现，使用内存 fixture；行为模型未提供 |
 | Linux V4L2、RGA、MPP、RKNN 目标程序 | 源码接线完成，SDK 编译/板端验证待完成 |
 | 双真实 Camera、ISP/3A、模型精度、24/72h长稳 | BLOCKED_HARDWARE |
@@ -29,7 +29,7 @@ Windows 已安装 Visual Studio C++ 与 Windows SDK 时：
 powershell -ExecutionPolicy Bypass -File scripts/build_host_windows.ps1
 ```
 
-CMake >=3.16，C++17、Threads::Threads、GCC/Clang警告开关和 compile_commands.json；Windows 脚本 clean-first 避免本机旧依赖记录残留。主机测试不编译厂商视频实现。Linux CI 另行验证可移植性及 ASan/UBSan；真实执行结果见 [测试记录](Plan/08_TEST_RESULTS.md)。
+CMake >=3.16，C++17、Threads::Threads、GCC/Clang警告开关和 compile_commands.json；Windows 脚本 clean-first 避免本机旧依赖记录残留。主机测试不编译厂商视频实现。Linux CI 已通过普通与ASan/UBSan构建及各400次压力测试；真实执行结果见 [测试记录](Plan/08_TEST_RESULTS.md)。
 
 ## BSP 构建和运行
 
