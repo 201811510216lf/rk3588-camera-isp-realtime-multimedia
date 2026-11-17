@@ -6,7 +6,7 @@ RAW Bayer 经 black level、坏点/镜头阴影、demosaic、AWB/CCM、gamma、�
 
 ## 当前实现
 
-`lib/v4l2_isp_camera.cpp` 实现 NV12/NV12M V4L2 capture、plane/stride/bytesused 校验和 lease 生命周期；`lib/aiq_controller.cpp` 只做运行时发现和状态导出，所有 AE/AWB/曝光/增益写操作在未识别 BSP API 时返回 `Unsupported`，没有伪造 rkAIQ 符号。
+`src/v4l2_isp_camera.cpp` 实现 NV12/NV12M V4L2 capture、plane/stride/bytesused 校验和 lease 生命周期；`src/aiq_controller.cpp` 只做运行时发现和状态导出，所有 AE/AWB/曝光/增益写操作在未识别 BSP API 时返回 `Unsupported`，没有伪造 rkAIQ 符号。
 
 ## 真实 rkAIQ 接入要求
 

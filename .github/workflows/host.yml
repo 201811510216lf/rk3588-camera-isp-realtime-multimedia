@@ -1,0 +1,12 @@
+name: Host software validation
+on: [push, pull_request]
+jobs:
+  host:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        sanitizer: [OFF, ON]
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/run_tests.sh -DENABLE_V4L2=ON -DENABLE_ASAN_UBSAN=${{ matrix.sanitizer }}
+      - run: bash scripts/run_stress_tests.sh

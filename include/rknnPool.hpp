@@ -9,22 +9,24 @@
 #ifndef _rknnPool_H
 #define _rknnPool_H
 
-#include <queue>
-#include <vector>
-#include <iostream>
-#include <new>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <climits>
-#include "rga.h"
-#include "im2d.h"
 #include "RgaUtils.h"
-#include "rknn_api.h"
-#include "postprocess.h"
+#include "ai/model_contract.h"
+#include "im2d.h"
 #include "opencv2/core/core.hpp"
 #include "opencv2/imgcodecs.hpp"
 #include "opencv2/imgproc.hpp"
+#include "postprocess.h"
+#include "rga.h"
+#include "rknn_api.h"
+#include <climits>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <iostream>
+#include <new>
+#include <queue>
+#include <vector>
 using cv::Mat;
 using std::queue;
 using std::vector;
@@ -32,9 +34,8 @@ using std::vector;
 static unsigned char *load_data(FILE *fp, size_t ofst, size_t sz);
 static unsigned char *load_model(const char *filename, int *model_size);
 
-class rknn_lite
-{
-private:
+class rknn_lite {
+  private:
     rknn_context rkModel = 0;
     unsigned char *model_data = nullptr;
     rknn_sdk_version version{};
@@ -49,23 +50,30 @@ private:
     int class_num = 0;
     int id;
     bool initialized_ = false;
+    ai::ModelContract contract_;
 
-public:
+  public:
     Mat ori_img;
-    int interf(detect_result_group_t &detect_result_group);
-    rknn_lite(const char *dst, int n, int class_num, int id);
+    int interf(detect_result_group_t &detect_result_group, const ai::PreparedTensor *prepared = nullptr);
+    rknn_lite(const char *dst, int n, int class_num, int id, const ai::ModelContract *contract = nullptr);
     ~rknn_lite();
     rknn_lite(const rknn_lite &) = delete;
     rknn_lite &operator=(const rknn_lite &) = delete;
     bool valid() const { return initialized_; }
 };
 
-rknn_lite::rknn_lite(const char *model_name, int n, int class_num, int id)
-{
+rknn_lite::rknn_lite(const char *model_name, int n, int class_num, int id,
+                     const ai::ModelContract *contract) {
+    std::string contract_error;
+    if (!contract || !contract->supports_legacy_rknn(&contract_error) ||
+        class_num != static_cast<int>(contract->class_names.size())) {
+        printf("RKNN_MODEL_CONTRACT_REQUIRED: %s\n", contract_error.c_str());
+        return;
+    }
+    contract_ = *contract;
     this->class_num = class_num;
     this->id = id;
-    if (n < -1 || n > 2)
-    {
+    if (n < -1 || n > 2) {
         printf("RKNN core must be -1 (auto), 0, 1 or 2\n");
         return;
     }
@@ -73,21 +81,18 @@ rknn_lite::rknn_lite(const char *model_name, int n, int class_num, int id)
     printf("Loading model id = %d\n", id);
     int model_data_size = 0;
     // 读取模型文件数据
-    if (!model_name)
-    {
+    if (!model_name) {
         printf("RKNN model path is null\n");
         return;
     }
     model_data = load_model(model_name, &model_data_size);
-    if (!model_data || model_data_size <= 0)
-    {
+    if (!model_data || model_data_size <= 0) {
         printf("RKNN model is unavailable: %s\n", model_name ? model_name : "(null)");
         return;
     }
     // 通过模型文件初始化rknn类
     ret = rknn_init(&rkModel, model_data, model_data_size, 0, NULL);
-    if (ret < 0)
-    {
+    if (ret < 0) {
         printf("rknn_init error ret=%d\n", ret);
         return;
     }
@@ -99,8 +104,7 @@ rknn_lite::rknn_lite(const char *model_name, int n, int class_num, int id)
     else if (n == 2)
         core_mask = RKNN_NPU_CORE_2;
     ret = rknn_set_core_mask(rkModel, core_mask);
-    if (ret < 0)
-    {
+    if (ret < 0) {
         printf("rknn_set_core_mask error ret=%d\n", ret);
         rknn_destroy(rkModel);
         rkModel = 0;
@@ -109,8 +113,7 @@ rknn_lite::rknn_lite(const char *model_name, int n, int class_num, int id)
 
     // 初始化rknn类的版本
     ret = rknn_query(rkModel, RKNN_QUERY_SDK_VERSION, &version, sizeof(rknn_sdk_version));
-    if (ret < 0)
-    {
+    if (ret < 0) {
         printf("rknn_init error ret=%d\n", ret);
         rknn_destroy(rkModel);
         rkModel = 0;
@@ -119,17 +122,15 @@ rknn_lite::rknn_lite(const char *model_name, int n, int class_num, int id)
 
     // 获取模型的输入参数
     ret = rknn_query(rkModel, RKNN_QUERY_IN_OUT_NUM, &io_num, sizeof(io_num));
-    if (ret < 0)
-    {
+    if (ret < 0) {
         printf("rknn_init error ret=%d\n", ret);
         rknn_destroy(rkModel);
         rkModel = 0;
         return;
     }
 
-    if (io_num.n_input != 1 || io_num.n_output < 3)
-    {
-        printf("RKNN model must expose exactly one input and at least three outputs\n");
+    if (io_num.n_input != 1 || io_num.n_output != 3) {
+        printf("RKNN model must expose exactly one input and three outputs\n");
         rknn_destroy(rkModel);
         rkModel = 0;
         return;
@@ -137,19 +138,16 @@ rknn_lite::rknn_lite(const char *model_name, int n, int class_num, int id)
 
     // 设置输入数组
     input_attrs = new (std::nothrow) rknn_tensor_attr[io_num.n_input];
-    if (!input_attrs)
-    {
+    if (!input_attrs) {
         rknn_destroy(rkModel);
         rkModel = 0;
         return;
     }
     memset(input_attrs, 0, sizeof(rknn_tensor_attr) * io_num.n_input);
-    for (int i = 0; i < io_num.n_input; i++)
-    {
+    for (int i = 0; i < io_num.n_input; i++) {
         input_attrs[i].index = i;
         ret = rknn_query(rkModel, RKNN_QUERY_INPUT_ATTR, &(input_attrs[i]), sizeof(rknn_tensor_attr));
-        if (ret < 0)
-        {
+        if (ret < 0) {
             printf("rknn_init error ret=%d\n", ret);
             delete[] input_attrs;
             input_attrs = nullptr;
@@ -161,8 +159,7 @@ rknn_lite::rknn_lite(const char *model_name, int n, int class_num, int id)
 
     // 设置输出数组
     output_attrs = new (std::nothrow) rknn_tensor_attr[io_num.n_output];
-    if (!output_attrs)
-    {
+    if (!output_attrs) {
         delete[] input_attrs;
         input_attrs = nullptr;
         rknn_destroy(rkModel);
@@ -170,12 +167,10 @@ rknn_lite::rknn_lite(const char *model_name, int n, int class_num, int id)
         return;
     }
     memset(output_attrs, 0, sizeof(rknn_tensor_attr) * io_num.n_output);
-    for (int i = 0; i < io_num.n_output; i++)
-    {
+    for (int i = 0; i < io_num.n_output; i++) {
         output_attrs[i].index = i;
         ret = rknn_query(rkModel, RKNN_QUERY_OUTPUT_ATTR, &(output_attrs[i]), sizeof(rknn_tensor_attr));
-        if (ret < 0)
-        {
+        if (ret < 0) {
             delete[] input_attrs;
             delete[] output_attrs;
             input_attrs = nullptr;
@@ -186,6 +181,10 @@ rknn_lite::rknn_lite(const char *model_name, int n, int class_num, int id)
         }
     }
 
+    if (input_attrs[0].n_dims != 4 || input_attrs[0].dims[0] != 1) {
+        printf("RKNN_MODEL_CONTRACT_MISMATCH: input rank/batch\n");
+        return;
+    }
     // 设置输入参数
     /*
     CHW：Batch(批次) -> Channel(通道) -> Height(高) -> Width(宽)。
@@ -193,19 +192,34 @@ rknn_lite::rknn_lite(const char *model_name, int n, int class_num, int id)
     NHWC：Batch(批次) -> Height(高) -> Width(宽) -> Channel(通道)。
     这是 TensorFlow 等框架以及我们常用的 OpenCV 图像默认的格式。
     */
-    if (input_attrs[0].fmt == RKNN_TENSOR_NCHW)
-    {
+    if (input_attrs[0].fmt == RKNN_TENSOR_NCHW) {
         channel = input_attrs[0].dims[1];
         height = input_attrs[0].dims[2];
         width = input_attrs[0].dims[3];
-    }
-    else
-    {
+    } else {
         height = input_attrs[0].dims[1];
         width = input_attrs[0].dims[2];
         channel = input_attrs[0].dims[3];
     }
 
+    if (width != static_cast<int>(contract_.input_width) ||
+        height != static_cast<int>(contract_.input_height) || channel != 3) {
+        printf("RKNN_MODEL_CONTRACT_MISMATCH: input dimensions\n");
+        return;
+    }
+    for (uint32_t i = 0; i < io_num.n_output; ++i) {
+        const uint32_t stride = 8U << i;
+        const auto &attr = output_attrs[i];
+        if (attr.type != RKNN_TENSOR_INT8 || attr.qnt_type != RKNN_TENSOR_QNT_AFFINE_ASYMMETRIC ||
+            attr.fmt != RKNN_TENSOR_NCHW || attr.n_dims != 4 || attr.dims[0] != 1 ||
+            attr.dims[1] != 3U * (5U + static_cast<uint32_t>(class_num)) ||
+            attr.dims[2] != static_cast<uint32_t>(height) / stride ||
+            attr.dims[3] != static_cast<uint32_t>(width) / stride || !std::isfinite(attr.scale) ||
+            attr.scale <= 0) {
+            printf("RKNN_MODEL_CONTRACT_MISMATCH: output %u schema/quantization\n", i);
+            return;
+        }
+    }
     memset(inputs, 0, sizeof(inputs));
     inputs[0].index = 0;
     inputs[0].type = RKNN_TENSOR_UINT8;
@@ -215,9 +229,8 @@ rknn_lite::rknn_lite(const char *model_name, int n, int class_num, int id)
     initialized_ = true;
 }
 
-rknn_lite::~rknn_lite()
-{
-    if (initialized_ && rkModel)
+rknn_lite::~rknn_lite() {
+    if (rkModel)
         ret = rknn_destroy(rkModel);
     delete[] input_attrs;
     delete[] output_attrs;
@@ -225,18 +238,27 @@ rknn_lite::~rknn_lite()
         free(model_data);
 }
 
-int rknn_lite::interf(detect_result_group_t &detect_result_group)
-{
+int rknn_lite::interf(detect_result_group_t &detect_result_group, const ai::PreparedTensor *prepared) {
     if (!initialized_ || ori_img.empty() || io_num.n_output < 3)
         return -1;
     cv::Mat img;
     // 获取图像宽高
     int img_width = ori_img.cols;
     int img_height = ori_img.rows;
-    cv::cvtColor(ori_img, img, cv::COLOR_BGR2RGB);
-    if (img_width != width || img_height != height)
-        cv::resize(img, img, cv::Size(width, height));//原地覆盖
-    inputs[0].buf = (void *)img.data;
+    if (prepared) {
+        if (prepared->width != static_cast<uint32_t>(width) ||
+            prepared->height != static_cast<uint32_t>(height) ||
+            prepared->bytes.size() != static_cast<size_t>(width) * height * 3U || !prepared->floats.empty())
+            return -1;
+        inputs[0].buf = const_cast<uint8_t *>(prepared->bytes.data());
+    } else {
+        // Compatibility path for callers already providing BGR; the main NV12
+        // pipeline supplies the contract-prepared tensor explicitly.
+        cv::cvtColor(ori_img, img, cv::COLOR_BGR2RGB);
+        if (img_width != width || img_height != height)
+            cv::resize(img, img, cv::Size(width, height));
+        inputs[0].buf = img.data;
+    }
     // 设置rknn的输入数据
     ret = rknn_inputs_set(rkModel, io_num.n_input, inputs);
     if (ret < 0)
@@ -275,17 +297,15 @@ int rknn_lite::interf(detect_result_group_t &detect_result_group)
 
     std::vector<float> out_scales;
     std::vector<int32_t> out_zps;
-    for (int i = 0; i < io_num.n_output; ++i)
-    {
+    for (int i = 0; i < io_num.n_output; ++i) {
         out_scales.push_back(output_attrs[i].scale);
         out_zps.push_back(output_attrs[i].zp);
     }
 
-    ret = post_process((int8_t *)outputs[0].buf, (int8_t *)outputs[1].buf, (int8_t *)outputs[2].buf,
-                       height, width, box_conf_threshold, nms_threshold, scale_w, scale_h,
-                       out_zps, out_scales, &detect_result_group, class_num);
-    if (ret < 0)
-    {
+    ret = post_process((int8_t *)outputs[0].buf, (int8_t *)outputs[1].buf, (int8_t *)outputs[2].buf, height,
+                       width, box_conf_threshold, nms_threshold, scale_w, scale_h, out_zps, out_scales,
+                       &detect_result_group, class_num, contract_.class_names);
+    if (ret < 0) {
         const int release_ret = rknn_outputs_release(rkModel, io_num.n_output, outputs.data());
         return release_ret < 0 ? release_ret : ret;
     }
@@ -293,84 +313,76 @@ int rknn_lite::interf(detect_result_group_t &detect_result_group)
     // Draw Objects
     char text[256];
     // std::cout << detect_result_group.count << " objects detected.\n";
-    for (int i = 0; i < detect_result_group.count; i++)
-    {
+    for (int i = 0; i < detect_result_group.count; i++) {
         detect_result_t *det_result = &(detect_result_group.results[i]);
         sprintf(text, "%s %.1f%%", det_result->name, det_result->prop * 100);
         int x1 = det_result->box.left;
         int y1 = det_result->box.top;
         if (id == 0)
-            rectangle(ori_img, cv::Point(x1, y1), cv::Point(det_result->box.right, det_result->box.bottom), cv::Scalar(0, 255, 0, 0), 3);
-        else
-        {
-            rectangle(ori_img, cv::Point(x1, y1), cv::Point(det_result->box.right, det_result->box.bottom), cv::Scalar(0, 0, 255, 0), 3);
+            rectangle(ori_img, cv::Point(x1, y1), cv::Point(det_result->box.right, det_result->box.bottom),
+                      cv::Scalar(0, 255, 0, 0), 3);
+        else {
+            rectangle(ori_img, cv::Point(x1, y1), cv::Point(det_result->box.right, det_result->box.bottom),
+                      cv::Scalar(0, 0, 255, 0), 3);
         }
-        //putText(ori_img, text, cv::Point(x1, y1 + 12), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 255, 255));
+        // putText(ori_img, text, cv::Point(x1, y1 + 12), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 255,
+        // 255));
     }
 
     ret = rknn_outputs_release(rkModel, io_num.n_output, outputs.data());
     return ret;
 }
 
-static unsigned char *load_data(FILE *fp, size_t ofst, size_t sz)
-{
+static unsigned char *load_data(FILE *fp, size_t ofst, size_t sz) {
     unsigned char *data;
     int ret;
 
     data = NULL;
 
-    if (NULL == fp)
-    {
+    if (NULL == fp) {
         return NULL;
     }
 
     ret = fseek(fp, ofst, SEEK_SET);
-    if (ret != 0)
-    {
+    if (ret != 0) {
         printf("blob seek failure.\n");
         return NULL;
     }
 
     data = (unsigned char *)malloc(sz);
-    if (data == NULL)
-    {
+    if (data == NULL) {
         printf("buffer malloc failure.\n");
         return NULL;
     }
     // fread 函数从文件指针 fp 中读取 sz 个字节，并保存在 data 中。以一个字节为单位，每次读取一个字节。
     ret = static_cast<int>(fread(data, 1, sz, fp));
-    //fread 是有返回值的，它会告诉你实际成功读取了多少个字节。
-    //高级的写法应该去检查 if (ret != sz)。如果文件刚好损坏，要求读 10MB，实际只读出 8MB，
-    //这段代码根本不会报错，而是直接把残缺的大脑喂给 NPU，导致 NPU 吐出极其诡异的乱码。
-    if (ret != static_cast<int>(sz))
-    {
+    // fread 是有返回值的，它会告诉你实际成功读取了多少个字节。
+    // 高级的写法应该去检查 if (ret != sz)。如果文件刚好损坏，要求读 10MB，实际只读出 8MB，
+    // 这段代码根本不会报错，而是直接把残缺的大脑喂给 NPU，导致 NPU 吐出极其诡异的乱码。
+    if (ret != static_cast<int>(sz)) {
         free(data);
         return NULL;
     }
     return data;
 }
 
-static unsigned char *load_model(const char *filename, int *model_size)
-{
+static unsigned char *load_model(const char *filename, int *model_size) {
     FILE *fp;
     unsigned char *data;
 
     fp = fopen(filename, "rb");
-    if (NULL == fp)
-    {
+    if (NULL == fp) {
         printf("Open file %s failed.\n", filename);
         return NULL;
     }
 
-    if (fseek(fp, 0, SEEK_END) != 0)
-    {
+    if (fseek(fp, 0, SEEK_END) != 0) {
         fclose(fp);
         return NULL;
     }
     // ftell 函数返回文件指针 fp 的当前位置。
     long size_long = ftell(fp);
-    if (size_long <= 0 || size_long > static_cast<long>(INT_MAX))
-    {
+    if (size_long <= 0 || size_long > static_cast<long>(INT_MAX)) {
         fclose(fp);
         return NULL;
     }

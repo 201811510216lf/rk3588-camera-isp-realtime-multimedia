@@ -1,0 +1,22 @@
+docs/interview
+docs/isp_migration
+docs/development
+reports
+CODEX_CAMERA_ISP_EXECUTION_PLAN.md
+CODEX_DUAL_CAMERA_SYNC_ISP_IMPLEMENTATION.md
+agent.md
+docs/ARCHITECTURE_REFACTOR_REPORT.md
+docs/CODEX_EXECUTION_STATUS.md
+docs/CODE_RECONCILIATION_2026-11-16.md
+docs/CODE_REVIEW_REPORT.md
+docs/DUAL_CAMERA_FINAL_CODE_REVIEW.md
+docs/FINAL_ACCEPTANCE_REVIEW.md
+docs/isp/14_IMX415_FINAL_CODE_REVIEW.md
+docs/software_isp/FINAL_IMPLEMENTATION_REPORT.md
+include/mipi_pipeline.h
+src/mipi_pipeline.cpp
+include/rknn_api.h
+scripts/run_round6_reports.py
+../CODEX_CAMERA_ISP_EXECUTION_PLAN.md (workspace duplicate outside Git root)
+../CODEX_DUAL_CAMERA_SYNC_ISP_IMPLEMENTATION.md (workspace duplicate outside Git root)
+build-review-msvc/ (obsolete generated build, ignored by Git)

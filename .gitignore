@@ -37,3 +37,9 @@ __pycache__/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Runtime measurements and laboratory recordings
+/recordings/
+/output/
+health.jsonl*
+*.jsonl

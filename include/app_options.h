@@ -8,19 +8,24 @@ struct AppOptions {
     enum class SyncMode { Software, Hardware };
     enum class SyncPolicy { DropOlder, HoldLast };
     enum class AiMode { Off, Async, Strict };
+    enum class VideoMode { Joint, Independent };
 
     Source source = Source::Mipi;
     // `device`/width/height are retained as compatibility aliases for the
     // original single-camera CLI. The dual-camera fields are authoritative.
-    std::string device = "/dev/video0";
-    std::string device0 = "/dev/video0";
-    std::string device1 = "/dev/video1";
+    std::string device;
+    std::string device0;
+    std::string device1;
+    std::string pixel_format = "auto";
+    uint32_t capture_buffer_count = 6;
+    VideoMode video_mode = VideoMode::Joint;
     uint32_t width = 1920;
     uint32_t height = 1080;
     uint32_t output_width = 1920;
     uint32_t output_height = 1080;
     uint32_t fps = 30;
     uint32_t bitrate = 4000000;
+    uint32_t minimum_free_mb = 1024; // MiB; zero disables the free-space threshold.
     uint32_t v4l2_timeout_ms = 1000;
     uint32_t duration_sec = 0;
     bool ai_enable = false;
@@ -29,6 +34,7 @@ struct AppOptions {
     uint32_t ai_fps = 5;
     int simulate_ai_ms = 0;
     std::string model_path;
+    std::string model_contract_path;
     std::string model0_path;
     std::string model1_path;
     int npu_core0 = -1;
@@ -52,5 +58,4 @@ struct AppOptions {
 void print_app_help(const char *program_name);
 
 // Returns true on success. On false, error contains a user-actionable message.
-bool parse_app_options(int argc, char **argv, AppOptions *options, bool *show_help,
-                      std::string *error);
+bool parse_app_options(int argc, char **argv, AppOptions *options, bool *show_help, std::string *error);

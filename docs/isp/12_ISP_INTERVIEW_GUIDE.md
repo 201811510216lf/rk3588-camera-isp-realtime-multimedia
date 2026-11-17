@@ -10,7 +10,7 @@ IMX415 mode table 与 lane/link frequency；Sensor subdev controls；DTS endpoin
 
 ## 证据路径
 
-`lib/v4l2_isp_camera.cpp`、`lib/frame_pairer.cpp`、`lib/aiq_controller.cpp`、`lib/media_graph_validator.cpp`、`scripts/isp_quality_analyzer.py`、`docs/FINAL_ACCEPTANCE_REVIEW.md`。
+`src/v4l2_isp_camera.cpp`、`src/frame_pairer.cpp`、`src/aiq_controller.cpp`、`src/media_graph_validator.cpp`、`scripts/isp_quality_analyzer.py`、`docs/FINAL_ACCEPTANCE_REVIEW.md`。
 
 ## 状态
 

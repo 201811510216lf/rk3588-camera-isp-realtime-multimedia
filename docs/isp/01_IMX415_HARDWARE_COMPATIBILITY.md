@@ -8,7 +8,7 @@
 
 - Sony IMX415 产品资料：3840×2160、CSI-2 2/4 lane、RAW10/RAW12；寄存器和 mode table 必须以模组供应商交付的完整 datasheet/初始化表为准。
 - Firefly CAM-8MS1M 页面列出 RK3588 兼容板，但页面版本、实际连接器、BSP 分支和 IQ 文件仍需在目标板确认。
-- 本仓库证据：`docs/isp_migration/hardware/README.md`、`scripts/isp_probe.sh`、`lib/media_graph_validator.cpp`。当前没有 board DTS、sensor 驱动或 IQ 文件。
+- 本仓库证据：`docs/isp_migration/hardware/README.md`、`scripts/isp_probe.sh`、`src/media_graph_validator.cpp`。当前没有 board DTS、sensor 驱动或 IQ 文件。
 
 公开参考（用于审计，不等同于当前 BSP 证据）：[Sony IMX415 产品资料](https://www.sony-semicon.com/files/62/pdf/p-12_IMX415-AAQR_AAMR_Flyer.pdf)、[IMX415 数据手册](https://dl.khadas.com/products/add-ons/cameras/imx415/datasheet/imx415-datasheet.pdf)、[Firefly IMX415/RK3588 文档](https://wiki.t-firefly.com/en/IMX415/imx415.html)。
 

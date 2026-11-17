@@ -6,7 +6,7 @@ IQ 文件必须来自厂商，按 Sensor、板级镜头、分辨率/模式和 rk
 
 ## 当前实现与计划
 
-`isp_debug_tool --iq-info` 和 `isp_control_cli --iq-root` 可报告候选路径；`lib/aiq_controller.cpp` 不修改 IQ。实际加载 API 待目标 SDK 确认。建议为每路保存 `camera_id/sensor/iQ_path/sha256/sdk_version/load_result` 清单。
+`isp_debug_tool --iq-info` 和 `isp_control_cli --iq-root` 可报告候选路径；`src/aiq_controller.cpp` 不修改 IQ。实际加载 API 待目标 SDK 确认。建议为每路保存 `camera_id/sensor/iQ_path/sha256/sdk_version/load_result` 清单。
 
 ## 调试命令
 

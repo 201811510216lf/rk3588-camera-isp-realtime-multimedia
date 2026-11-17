@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -16,10 +17,20 @@ struct EncodedPacket {
     int64_t pts = 0;
     int64_t dts = 0;
     bool keyframe = false;
+    // PTS/DTS are ticks in this rational time base, never source nanoseconds.
+    uint32_t time_base_num = 1;
+    uint32_t time_base_den = 30;
+    struct SourceFrame {
+        uint32_t camera_id = 0;
+        uint64_t sequence = 0;
+        uint64_t timestamp_ns = 0;
+    };
+    std::array<SourceFrame, 2> sources{};
+    size_t source_count = 0;
 };
 
 class EncodedPacketDistributor {
-public:
+  public:
     using Sink = std::function<bool(const EncodedPacket &)>;
 
     struct Stats {
@@ -33,7 +44,7 @@ public:
     void clear();
     Stats stats() const;
 
-private:
+  private:
     struct NamedSink {
         std::string name;
         Sink sink;
@@ -45,4 +56,3 @@ private:
     int64_t last_pts_ = -1;
     int64_t last_dts_ = -1;
 };
-

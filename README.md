@@ -1,60 +1,75 @@
-# RK3588 双路 Camera 与 Software ISP
+# RK3588 双路 Camera 大鼠行为监测
 
-当前源码包含两个独立入口。项目已从早期单路 MIPI 方案发展到双路 Camera；旧计划和审查报告保留为阶段记录。
+面向实验室连续监控：两路真实 Camera 经 RK3588 硬件 ISP 输出 NV12/NV12M，执行异步大鼠检测/跟踪/时间行为分析，并保存视频与结构化事件。当前为软件实现与接入阶段，没有开发板、SDK、真实行为模型或24小时板测证据。
 
-| 入口 | 当前实现 | 运行条件与边界 |
-|---|---|---|
-| `myDemo`：`main.cpp` → `DualCameraPipeline` | 两路 V4L2 NV12/NV12M → 软件时间戳配帧；两路可选 RKNN → OSD/左右拼接 → 一个 MPP H.264 编码器 → raw H.264、RTMP/分段 MP4 | Linux/RK3588、真实节点、RKNN/MPP/RGA/OpenCV SDK；尚未目标构建或板端验收 |
-| `camera_isp_demo`：`tools/camera_isp_demo.cpp` | VirtualSensor RAW10 → Software ISP → RGB/NV12、软件 AE/AWB、可选 Demo AI、双路元数据配帧和首帧拼接样例 | 独立 C++17 主机模块；模拟输入，不连接真实 rkAIQ/RKISP/RKNN/MPP |
+| 验证层 | 当前状态 |
+|---|---|
+| C++17 软件核心与自动测试 | Windows Ninja/MSVC clean build，18/18 CTest 通过 |
+| 模型/事件/录像索引软件 | 已实现，使用内存 fixture；行为模型未提供 |
+| Linux V4L2、RGA、MPP、RKNN 目标程序 | 源码接线完成，SDK 编译/板端验证待完成 |
+| 双真实 Camera、ISP/3A、模型精度、24/72h长稳 | BLOCKED_HARDWARE |
+| MPP EOS/显式PTS/拆分输入输出线程、VFR容器时间轴 | PARTIAL，见适配清单 |
 
-阅读入口：[当前架构与源码索引](docs/CURRENT_ARCHITECTURE.md)、[当前证据与验证状态](docs/CODEX_EXECUTION_STATUS.md)、[本轮代码差异审查](docs/CODE_RECONCILIATION_2026-11-16.md)。`lib/mipi_pipeline.cpp` 是保留的旧单路实现，不在当前 `myDemo` 构建源清单中。历史文档中的“当前”、行号和测试结果只适用于其记录阶段。
+## 主链路
 
-## 双路目标程序
+Sensor0/1 → MIPI/RKCIF/RKISP → 两路 V4L2 NV12/NV12M → 共享 Frame lease → 独立录像队列 / 软件配帧合成 → RGA/CPU标明的图像处理、精确帧OSD → MPP H.264 → 各自有界 raw/MP4/network sink。AI 使用独立有界队列，结果保留原 Camera/sequence/timestamp/model 信息。
 
-下面是目标板配置示例，节点、模型和服务器必须先由实际 BSP/设备确认。图像到达 V4L2 之前的 Sensor/CSI/RKISP/rkAIQ 属于外部板级前置条件；本程序不负责初始化 rkAIQ。
+RkAiq 是外部 ISP 3A/IQ 控制，不是串行图像硬件节点。主产品只有两路真实 Camera，无文件、USB、RTSP 或 Mock 输入模式。`--video-mode independent` 两路录像互不等待配帧；`joint` 是配帧合成录像，不能视为两路原始完整录像。软件配帧不等于同时曝光。
 
-```bash
-./build/myDemo --camera0 /dev/videoX --camera1 /dev/videoY \
-  --input-width 1920 --input-height 1080 --fps 30 \
-  --output-width 1920 --output-height 1080 \
-  --sync-mode software --sync-tolerance-ms 5 --sync-max-wait-ms 50 \
-  --sync-policy drop-older --ai-mode async --model /data/models/behavior.rknn \
-  --rtmp-url rtmp://SERVER/live/dual-camera \
-  --record --output-dir /data/recordings --segment-sec 300 \
-  --duration-sec 600 --output /data/dual.h264
-```
-
-AI、推流、分段录像分别可用 `--no-ai`、`--no-stream`、`--no-record` 关闭；这些参数不会把双路入口变为单 Camera 模式。默认输出为 1920×1080 左右 letterbox。`FramePairer` 只做同一时钟域的时间戳配帧；`--sync-mode hardware` 因没有硬件触发后端而直接失败，不能据配帧结果声称同时曝光。
-
-RTMP/MP4 通过外部 `ffmpeg` 子进程消费同一 H.264 包流。分发器同步调用各 sink，慢网络/磁盘会回压编码线程；当前没有每 sink 的独立队列或有界子进程关闭保证。DMA-BUF import、硬件 completion、RKNN 推理、MPP/RGA、断线恢复和长稳均需目标证据。
-
-## 独立 Software ISP 实验
+## 主机构建
 
 ```bash
-./build/camera_isp_demo --sensor virtual --width 640 --height 360 --fps 30 \
-  --duration 3 --format raw10 --enable-ae --output=output/demo --report=output/reports-single
-./build/camera_isp_demo --camera-count 2 --sensor virtual --width 640 --height 360 \
-  --fps 30 --duration 3 --format raw10 --enable-ai --enable-composite \
-  --output=output/dual --report=output/reports-dual
+bash scripts/run_tests.sh
+bash scripts/run_stress_tests.sh
 ```
 
-以上为单配置生成器的路径；Visual Studio Debug 构建的程序位于 `build-review-msvc/Debug/`。当前 demo 导出首帧 PPM、可选首帧拼接 NV12 和 JSON 统计，并不导出整段 NV12 视频。双路循环串行处理两台 VirtualSensor，配帧统计与首帧拼接输出仍是分开的演示逻辑。`measured_fps` 是无实时节流的主机吞吐，不能代表实际 Camera FPS。
+Windows 已安装 Visual Studio C++ 与 Windows SDK 时：
 
-`reports/isp/` 中由 `scripts/run_round6_reports.py` 生成的曲线和 JSON 是辅助合成数据，不能证明 C++ AE/AWB 收敛或成像质量。Demo AI 是模拟检测；Software ISP 的 YAML profile 不等于 Rockchip IQ。详见 [Software ISP 状态](docs/software_isp/17_IMPLEMENTATION_STATUS.md)。
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/build_host_windows.ps1
+```
 
-## 构建与检查说明
+CMake >=3.16，C++17、Threads::Threads、GCC/Clang警告开关和 compile_commands.json；Windows 脚本 clean-first 避免本机旧依赖记录残留。主机测试不编译厂商视频实现。Linux CI 另行验证可移植性及 ASan/UBSan；真实执行结果见 [测试记录](Plan/08_TEST_RESULTS.md)。
 
-主机不需要 RK3588 SDK，示例命令供后续复现：
+## BSP 构建和运行
+
+在瑞芯微官方 RK3588 BSP 配套 Linux 工具链中提供真实 SDK：
 
 ```bash
-cmake -S . -B build-host -DBUILD_RK_DEMO=OFF -DBUILD_HOST_TESTS=ON -DBUILD_BSP_TOOLS=ON
-cmake --build build-host --config Debug --parallel
-ctest --test-dir build-host -C Debug --output-on-failure
-python -m unittest discover -s tests -p '*isp_quality_analyzer*.py'
+cmake -S . -B build-rk -DBUILD_RK_DEMO=ON -DREQUIRE_RK_DEMO=ON \
+  -DENABLE_V4L2=ON -DENABLE_ROCKCHIP_RGA=ON -DENABLE_ROCKCHIP_MPP=ON -DENABLE_RKNN=ON \
+  -DRGA_PATH=/opt/bsp/rga -DMPP_PATH=/opt/bsp/mpp -DRKNN_API_PATH=/opt/bsp/rknn \
+  -DOpenCV_DIR=/opt/bsp/opencv/lib/cmake/opencv4
+cmake --build build-rk --parallel
+./build-rk/myDemo --camera0 /dev/videoX --camera1 /dev/videoY \
+  --pixel-format auto --capture-buffers 6 --video-mode independent \
+  --input-width 1920 --input-height 1080 --output-width 1920 --output-height 1080 --fps 30 \
+  --no-ai --record --output-dir /data/recordings --output /data/recordings/archive.h264 \
+  --segment-sec 300 --min-free-mb 1024 --no-stream --duration-sec 600
 ```
 
-目标板/交叉构建需提供 RKNN、MPP、RGA、OpenCV SDK，并使用 `-DBUILD_RK_DEMO=ON -DREQUIRE_RK_DEMO=ON` 避免依赖缺失时跳过目标。主机编译不包含 `myDemo`，不能证明 Linux/厂商接口可构建。
+节点必须由实际 media graph 确认，不默认使用 video0/1。上述命令是板端接入示例，尚未实际运行。SDK 开关开启而依赖缺失会明确失败；应用侧 ENABLE_RKAIQ 尚未适配，直接报错，应使用 BSP aiq 服务。
 
-本轮已找到 Visual Studio 自带的 CMake/MSVC，旧文档中的“PATH 无工具”不等于机器未安装工具。已执行检查和未通过项逐项记录在[状态文档](docs/CODEX_EXECUTION_STATUS.md)；依用户后续要求，修正后的版本仅审查差异，不再运行构建或测试。
+AI 需增加 `--ai-mode async --model /data/rat.rknn --model-contract /data/rat.contract --events /data/recordings/events.jsonl`。模型契约必须来自导出 metadata，详见 [RKNN 接入](docs/RKNN_BACKEND_ADAPTATION.md)。当前 adapter 仅支持匹配的 YOLOv5 三头 INT8 schema；普通 rat detector 的 behavior_classes 留空，不虚构行为。`--ai-mode strict` 因未实现而报错。行为状态 OSD 目前为 UNAVAILABLE，事件另存 JSONL。
 
-板端准备与验收见 [BSP/ISP](docs/BSP_CAMERA_ISP.md)、[同步设计](docs/SYNC_DESIGN.md)、[板端验收](docs/BOARD_ACCEPTANCE.md)。
+网络采用 `--publish-url rtsp://SERVER/app/stream` 或 `rtmp[s]://...`，保留旧 --rtmp-url。每个 sink 独立队列/线程；网络故障不阻塞录像。录像队列满、磁盘阈值或写入失败会显式停止并报错，原始数据保留。磁盘写入依赖操作系统，未声称硬实时保证。
+
+MP4 关键帧分段、先写 partial，成功 finalize 后改名并记录索引。FFmpeg 由 H.264 重建 CFR 时间轴，源采集间隔仅存于索引，尚不支持保留采集间隔的 VFR mux。索引为 joint-index.jsonl / cam0-index.jsonl / cam1-index.jsonl。事件关联：
+
+```bash
+python tools/associate_events.py --events /data/recordings/events.jsonl \
+  --index /data/recordings/cam0-index.jsonl --recording-dir /data/recordings \
+  --output /data/recordings/associated-cam0.jsonl
+```
+
+每路分别选取对应事件和索引；缺失视频/未 finalize 标为 partial/unmapped。默认不自动删除实验录像。
+
+## 保留的独立实验
+
+`camera_isp_demo`、`src/camera/`、`src/isp/` 保留 VirtualSensor RAW10/Software ISP 实验。它是独立工具，不连接 RKISP NV12 主链路、不替代 RGA/MPP/RKNN，Demo AI 明确为模拟。旧合成 reports 已清理；实验算法及文档仍保留。
+
+## 工程与交付
+
+- include/ 公共接口，src/ 实现，tools/ 工具，tests/ 主机测试，configs/ ISP配置，lib/ 仅本地SDK说明。
+- [完整架构](Plan/FINAL_ARCHITECTURE.md)、[实现状态](Plan/PROJECT_STATUS.md)、[硬件适配](Plan/HARDWARE_ADAPTATION_ROADMAP.md)、[最终交付](Plan/FINAL_DELIVERY_REPORT.md)。
+- [清理清单](Plan/CLEANUP_MANIFEST.txt)记录被替代计划、旧审查/面试材料、生成报告、废弃单路入口和SDK重复头；保留成果可从 Git 历史追溯。本轮未复制参考工程源码/二进制。

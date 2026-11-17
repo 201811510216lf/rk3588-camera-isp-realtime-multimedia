@@ -49,13 +49,16 @@ struct FramePair {
 };
 
 struct FramePairerConfig {
-    uint64_t tolerance_ns = 5'000'000;   // 5 ms
-    uint64_t max_wait_ns = 50'000'000;    // 50 ms
+    uint64_t tolerance_ns = 5'000'000; // 5 ms
+    uint64_t max_wait_ns = 50'000'000; // 50 ms
     size_t max_queue_depth = 8;
     FramePairPolicy policy = FramePairPolicy::DropOlder;
+    size_t max_stats_samples = 4096; // Rolling-window percentiles, bounded for 24h operation.
 };
 
 struct FramePairerStats {
+    uint64_t camera0_received = 0;
+    uint64_t camera1_received = 0;
     uint64_t matched_pairs = 0;
     uint64_t stale_pairs = 0;
     uint64_t pair_drops = 0;
@@ -74,10 +77,14 @@ struct FramePairerStats {
     double p50_ms() const { return percentile(50.0) / 1'000'000.0; }
     double p95_ms() const { return percentile(95.0) / 1'000'000.0; }
     double p99_ms() const { return percentile(99.0) / 1'000'000.0; }
+    double matched_frame_ratio() const {
+        const auto received = camera0_received + camera1_received;
+        return received ? 2.0 * static_cast<double>(matched_pairs) / received : 0.0;
+    }
 };
 
 class FramePairer {
-public:
+  public:
     explicit FramePairer(FramePairerConfig config = {});
 
     FramePairer(const FramePairer &) = delete;
@@ -98,9 +105,9 @@ public:
     FramePairerStats stats() const;
     size_t pending(uint32_t camera_id) const;
     void configure(FramePairerConfig config);
-    const FramePairerConfig &config() const { return config_; }
+    FramePairerConfig config() const;
 
-private:
+  private:
     static uint64_t monotonic_now_ns();
     static bool timestamp_less(const FrameSample &a, const FrameSample &b);
     bool compatible_clock_domains(const FrameSample &a, const FrameSample &b) const;
@@ -118,5 +125,5 @@ private:
     bool have_last_timestamp_[2] = {false, false};
     uint64_t next_pair_id_ = 1;
     FramePairerStats stats_;
+    size_t next_stats_sample_ = 0;
 };
-

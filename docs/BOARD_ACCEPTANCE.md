@@ -11,4 +11,4 @@
 7. **异常**：拔掉一路、停止 ffmpeg、填满磁盘、注入 MPP timeout、Ctrl+C、反复启动退出；确认无死锁、lease 泄漏、未回收线程或错误 index。
 8. **硬件同步**：只有拿到 Sensor 数据手册、DTS/driver diff、FSIN/Trigger 电平和 SOF/示波器证据后，才执行 `--sync-mode hardware`。否则预期结果是明确 fail-fast。
 
-当前环境结果：上述所有 BOARD_TESTED、TARGET_BUILT、RTMP_SERVER_VERIFIED、MP4_PLAYER_VERIFIED 均为 `NOT_MEASURED`；主机本轮已执行的构建/检查及失败项见 [执行状态](CODEX_EXECUTION_STATUS.md)；这些证据不代表板端通过。
+当前环境结果：上述所有 BOARD_TESTED、TARGET_BUILT、RTMP_SERVER_VERIFIED、MP4_PLAYER_VERIFIED 均为 `NOT_MEASURED`；主机本轮已执行的构建/检查及失败项见 [执行状态](../Plan/08_TEST_RESULTS.md)；这些证据不代表板端通过。

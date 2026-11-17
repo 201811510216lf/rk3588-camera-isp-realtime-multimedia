@@ -9,15 +9,13 @@
 #ifndef MPP_ENCODER_H
 #define MPP_ENCODER_H
 
-#include <cstddef>
-#include <stdint.h>
 #include "rk_mpi.h"
 #include "rk_venc_cfg.h"
-
-
+#include <cstddef>
+#include <stdint.h>
 
 class MppEncoder {
-public:
+  public:
     MppEncoder();
     ~MppEncoder();
 
@@ -29,60 +27,62 @@ public:
     int Init(int width, int height, int fps, int bitrate, int codec_type = 264);
 
     // 直接编码一帧 YUV420P 数据
-    int Encode(uint8_t* yuv_data, int yuv_size, uint8_t* packet_data, int* packet_size);
+    int Encode(uint8_t *yuv_data, int yuv_size, uint8_t *packet_data, int *packet_size);
 
     // Encode an ISP-produced NV12 frame. The current MPP path owns its input
     // buffer, so this method converts/copies NV12 into the encoder's I420
     // workspace; it does not claim DMA-BUF zero-copy.
-    int EncodeNV12(const uint8_t* nv12_data, int width, int height,
-                   int stride_y, int stride_uv, int data_size,
-                   uint8_t* packet_data, int* packet_size);
+    int EncodeNV12(const uint8_t *nv12_data, int width, int height, int stride_y, int stride_uv,
+                   int data_size, uint8_t *packet_data, int *packet_size);
 
     // 编码一帧 BGR 图像（使用 RGA 做 BGR->YUV420P，失败时回退 OpenCV）
     // bgr_stride: 可选，BGR 行字节步长；0 表示 width*3
-    int EncodeFrame(uint8_t* bgr_data, int width, int height, uint8_t* packet_data, int* packet_size, int bgr_stride = 0);
+    int EncodeFrame(uint8_t *bgr_data, int width, int height, uint8_t *packet_data, int *packet_size,
+                    int bgr_stride = 0);
 
     // 编码一帧 DMA/虚拟地址上的 BGR 图像，尽量减少拷贝
-    int EncodeFrameDma(void* bgr_va, int width, int height, uint8_t* packet_data, int* packet_size, int bgr_stride = 0);
+    int EncodeFrameDma(void *bgr_va, int width, int height, uint8_t *packet_data, int *packet_size,
+                       int bgr_stride = 0);
 
     // 获取 SPS / PPS 等头信息（可用于 FFmpeg extradata）
-    int GetHeader(uint8_t* header_data, int* header_size);
+    int GetHeader(uint8_t *header_data, int *header_size);
 
     // 释放资源
     void Release();
 
-private:
+  private:
     // Returns true only when no pending input exists. A timeout/error keeps
     // ownership until Release tears down the MPP context; no asynchronous
     // reset completion is assumed without target-BSP evidence.
     bool reset_and_release_pending();
 
-    MppCtx          mpp_ctx_;
-    MppApi*         mpp_mpi_;
-    MppEncCfg       enc_cfg_;
-    MppFrame        frame_;
-    MppPacket       packet_;
-    MppBufferGroup  frm_grp_;
-    MppBufferGroup  pkt_grp_;
+    MppCtx mpp_ctx_;
+    MppApi *mpp_mpi_;
+    MppEncCfg enc_cfg_;
+    MppFrame frame_;
+    MppPacket packet_;
+    MppBufferGroup frm_grp_;
+    MppBufferGroup pkt_grp_;
 
-    int             width_;
-    int             height_;
-    int             fps_;
-    int             bitrate_;
-    MppCodingType   mpp_type_;
-    bool            initialized_;
-    bool            faulted_;
+    int width_;
+    int height_;
+    int horizontal_stride_;
+    int vertical_stride_;
+    int fps_;
+    int bitrate_;
+    MppCodingType mpp_type_;
+    bool initialized_;
+    bool faulted_;
 
     // If encode_get_packet cannot establish completion, retain the submitted
     // frame and buffer until MPP reset/destroy has completed. They must not be
     // returned to the buffer group while the hardware may still reference them.
-    MppFrame        pending_frame_;
-    MppBuffer       pending_buffer_;
+    MppFrame pending_frame_;
+    MppBuffer pending_buffer_;
 
     // 预分配的 YUV 缓冲区，避免每帧 malloc/free
-    uint8_t*        yuv_buffer_;
-    int             yuv_buffer_size_;
+    uint8_t *yuv_buffer_;
+    int yuv_buffer_size_;
 };
 
 #endif // MPP_ENCODER_H
-

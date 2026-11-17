@@ -9,9 +9,11 @@
 #include <string>
 
 class V4L2IspCamera {
-public:
+  public:
     struct Config {
-        std::string device = "/dev/video0";
+        std::string device;
+        uint32_t camera_id = 0;
+        std::string pixel_format = "auto"; // auto, NV12, NV12M
         uint32_t width = 1920;
         uint32_t height = 1080;
         uint32_t fps = 30;
@@ -61,7 +63,7 @@ public:
     const Capabilities &capabilities() const { return capabilities_; }
     Stats stats() const;
 
-private:
+  private:
     struct CameraState;
 
     Config config_;

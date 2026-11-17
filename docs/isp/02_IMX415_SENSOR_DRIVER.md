@@ -6,7 +6,7 @@ Linux sensor driver 通过 I2C 配置寄存器，以 V4L2 subdev 向 CSI/ISP 暴
 
 ## 当前 BSP 依据
 
-仓库没有 kernel tree 或 `drivers/media/i2c/imx415.c`。用户态源码只在 `lib/v4l2_isp_camera.cpp` 消费 ISP 输出 NV12；它不是 Sensor driver。官方/板商驱动应优先复用，适配以最小 diff 方式提交。
+仓库没有 kernel tree 或 `drivers/media/i2c/imx415.c`。用户态源码只在 `src/v4l2_isp_camera.cpp` 消费 ISP 输出 NV12；它不是 Sensor driver。官方/板商驱动应优先复用，适配以最小 diff 方式提交。
 
 可追溯的上游参考是 [Linux `imx415.c`](https://linux.googlesource.com/linux/kernel/git/tip/tip/+/refs/heads/perf/urgent/drivers/media/i2c/imx415.c)；其寄存器和 mode 不能直接套用于未知 Rockchip vendor BSP。
 

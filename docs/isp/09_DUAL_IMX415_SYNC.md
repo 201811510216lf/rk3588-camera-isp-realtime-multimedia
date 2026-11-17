@@ -6,7 +6,7 @@
 
 ## 当前实现
 
-`lib/frame_pairer.cpp`、`lib/dual_camera_pipeline.cpp` 保留两路独立 capture、队列、AI context 和配对策略。`--sync-mode hardware` 在无真实触发后端时 fail-fast。双路 DPHY/I2C/供电未由仓库证明。
+`src/frame_pairer.cpp`、`src/dual_camera_pipeline.cpp` 保留两路独立 capture、队列、AI context 和配对策略。`--sync-mode hardware` 在无真实触发后端时 fail-fast。双路 DPHY/I2C/供电未由仓库证明。
 
 ## 验收顺序
 

@@ -1,6 +1,6 @@
 # Software ISP 当前实现状态
 
-以 [当前架构](../CURRENT_ARCHITECTURE.md) 和 [执行证据](../CODEX_EXECUTION_STATUS.md) 为准，核对日期 2026-11-16。
+以 [当前架构](../CURRENT_ARCHITECTURE.md) 和 [执行证据](../../Plan/08_TEST_RESULTS.md) 为准，核对日期 2026-11-16。
 
 | 模块 | 当前源码能力 | 限制 |
 |---|---|---|

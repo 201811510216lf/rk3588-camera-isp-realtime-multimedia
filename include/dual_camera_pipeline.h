@@ -34,11 +34,14 @@ struct DualCameraPipelineStats {
 };
 
 struct DualCameraPipelineConfig {
-    std::string camera0 = "/dev/video0";
-    std::string camera1 = "/dev/video1";
+    std::string camera0;
+    std::string camera1;
     uint32_t input_width = 1920;
     uint32_t input_height = 1080;
     uint32_t fps = 30;
+    uint32_t capture_buffer_count = 6;
+    std::string pixel_format = "auto";
+    AppOptions::VideoMode video_mode = AppOptions::VideoMode::Joint;
     uint32_t output_width = 1920;
     uint32_t output_height = 1080;
     uint32_t bitrate = 4000000;
@@ -53,6 +56,7 @@ struct DualCameraPipelineConfig {
     bool ai_required = false;
     uint32_t ai_fps = 5;
     int simulate_ai_ms = 0;
+    std::string model_contract_path;
     std::string model0_path;
     std::string model1_path;
     int npu_core0 = -1;
@@ -61,6 +65,7 @@ struct DualCameraPipelineConfig {
     std::string rtmp_url;
     std::string output_dir = "recordings";
     uint32_t segment_sec = 300;
+    uint64_t minimum_free_bytes = 1024ULL * 1024ULL * 1024ULL;
     std::string events_path;
     std::string sync_diagnostics_path;
     bool no_stream = false;
@@ -70,7 +75,7 @@ struct DualCameraPipelineConfig {
 };
 
 class DualCameraPipeline {
-public:
+  public:
     explicit DualCameraPipeline(DualCameraPipelineConfig config);
     ~DualCameraPipeline();
     DualCameraPipeline(const DualCameraPipeline &) = delete;
@@ -80,7 +85,7 @@ public:
     void request_stop();
     DualCameraPipelineStats stats() const;
 
-private:
+  private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

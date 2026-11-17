@@ -6,7 +6,7 @@ DTS 通过 sensor endpoint 的 `data-lanes`、`link-frequencies`、`remote-endpo
 
 ## 当前仓库证据
 
-没有目标板 DTS，因此没有直接修改 BSP 文件。只读检查器位于 `lib/media_graph_validator.cpp`，入口为 `tools/media_graph_validator_main.cpp`；脚本为 `scripts/isp_probe.sh`。它们只读取 `media-ctl -p` 和 `v4l2-ctl` 输出。
+没有目标板 DTS，因此没有直接修改 BSP 文件。只读检查器位于 `src/media_graph_validator.cpp`，入口为 `tools/media_graph_validator_main.cpp`；脚本为 `scripts/isp_probe.sh`。它们只读取 `media-ctl -p` 和 `v4l2-ctl` 输出。
 
 ## 可审查模板
 
