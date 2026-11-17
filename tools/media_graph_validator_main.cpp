@@ -18,9 +18,15 @@ uint32_t number(const std::string &text) {
 } // namespace
 int main(int argc, char **argv) {
     MediaGraphValidationConfig config;
+    bool json = false;
+    for (int i = 1; i < argc; ++i)
+        if (std::string(argv[i]) == "--json")
+            json = true;
     try {
         for (int i = 1; i < argc; ++i) {
             std::string arg = argv[i], value;
+            if (arg == "--json")
+                continue;
             if (arg == "--help" || arg == "-h") {
                 std::cout
                     << "Usage: " << argv[0] << " --config PATH\n"
@@ -28,6 +34,7 @@ int main(int argc, char **argv) {
                        "ENTITY --isp0 ENTITY --isp1 ENTITY\n"
                     << "  --graph-file PATH --camera0-info PATH --camera1-info PATH  offline diagnostics\n"
                     << "  --width N --height N --fps N  optional active-format checks\n"
+                    << "  --json  structured per-camera topology/output/provenance report\n"
                     << "No links, formats, controls or stream state are modified. Offline results do not "
                        "prove live readiness.\n";
                 return 0;
@@ -41,7 +48,7 @@ int main(int argc, char **argv) {
                     throw std::invalid_argument("missing value for " + arg);
                 value = argv[i];
             }
-            if (value.empty())
+            if (value.empty() || value.rfind("--", 0) == 0)
                 throw std::invalid_argument("empty value for " + arg);
             if (arg == "--config")
                 config.isp_config_file = value;
@@ -74,11 +81,27 @@ int main(int argc, char **argv) {
             else
                 throw std::invalid_argument("unknown option: " + arg);
         }
+        if (!config.isp_config_file.empty() &&
+            (!config.media_device.empty() || !config.camera0_node.empty() || !config.camera1_node.empty() ||
+             !config.camera0_sensor.empty() || !config.camera1_sensor.empty() ||
+             !config.camera0_isp.empty() || !config.camera1_isp.empty() || !config.graph_file.empty() ||
+             !config.camera0_info_file.empty() || !config.camera1_info_file.empty() ||
+             config.expected_width || config.expected_height || config.expected_fps))
+            throw std::invalid_argument("--config cannot be combined with manual mapping or format options");
     } catch (const std::exception &error) {
-        std::cerr << "CONFIG_ERROR: " << error.what() << '\n';
+        if (json) {
+            MediaGraphValidationReport failed;
+            failed.error = std::string("CONFIG_ERROR: ") + error.what();
+            std::cout << failed.json() << '\n';
+        } else
+            std::cerr << "CONFIG_ERROR: " << error.what() << '\n';
         return 2;
     }
     const auto report = validate_media_graph(config);
+    if (json) {
+        std::cout << report.json() << '\n';
+        return report.ok() ? 0 : 1;
+    }
     std::cout << report.summary() << '\n'
               << "graph_source=" << report.graph_source << '\n'
               << "camera0_source=" << report.camera0_source << '\n'

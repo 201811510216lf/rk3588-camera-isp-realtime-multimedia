@@ -57,7 +57,7 @@ option(ENABLE_V4L2 "Build real Linux V4L2 capture" ${BUILD_RK_DEMO})
 option(ENABLE_ROCKCHIP_RGA "Enable SDK RGA boundary" ${BUILD_RK_DEMO})
 option(ENABLE_ROCKCHIP_MPP "Enable SDK MPP boundary" ${BUILD_RK_DEMO})
 option(ENABLE_RKNN "Enable SDK RKNN boundary" ${BUILD_RK_DEMO})
-option(ENABLE_RKAIQ "Enable application-side RkAiq integration (not implemented)" OFF)
+option(ENABLE_RKAIQ "Enable a verified BSP RkAiq SDK adapter" OFF)
 add_library(runtime_core STATIC src/runtime/monitor.cpp)
 target_include_directories(runtime_core PUBLIC ${PROJECT_ROOT}/include)
 add_library(camera_core STATIC src/camera_frame.cpp)
@@ -106,6 +106,7 @@ add_library(isp_discovery STATIC
 target_include_directories(isp_discovery PUBLIC ${PROJECT_ROOT}/include)
 add_library(isp_control STATIC
     src/aiq_controller.cpp
+    src/isp/isp_cli.cpp
     src/isp/rkaiq_controller.cpp
     src/isp/backends/external_rkaiq_service_backend.cpp
     src/isp/backends/rockchip_rkaiq_backend.cpp
@@ -271,7 +272,11 @@ if(BUILD_BSP_TOOLS)
         add_test(NAME isp_control_cli_test
                  COMMAND ${Python3_EXECUTABLE} -m unittest discover -s ${PROJECT_ROOT}/tests -p "test_isp_cli.py")
         set_tests_properties(isp_control_cli_test PROPERTIES TIMEOUT 30
-            ENVIRONMENT "ISP_CONTROL_CLI=$<TARGET_FILE:isp_control_cli>")
+            ENVIRONMENT "ISP_CONTROL_CLI=$<TARGET_FILE:isp_control_cli>;ISP_DEBUG_TOOL=$<TARGET_FILE:isp_debug_tool>")
+        add_test(NAME media_graph_cli_test
+                 COMMAND ${Python3_EXECUTABLE} -m unittest discover -s ${PROJECT_ROOT}/tests -p "test_media_graph_cli.py")
+        set_tests_properties(media_graph_cli_test PROPERTIES TIMEOUT 30
+            ENVIRONMENT "MEDIA_GRAPH_VALIDATOR=$<TARGET_FILE:media_graph_validator>")
     endif()
 endif()
 

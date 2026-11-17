@@ -4,6 +4,10 @@
 #include <map>
 
 namespace isp {
+struct CameraSnapshot {
+    IspStatus status;
+    IspControlResult result;
+};
 // Keeps the existing AiqController as the one controller implementation.
 class RkAiqManager {
   public:
@@ -18,6 +22,8 @@ class RkAiqManager {
     AiqController *controller(IspCameraId id);
     const AiqController *controller(IspCameraId id) const;
     std::vector<IspCameraId> camera_ids() const;
+    // Queries every registered camera independently; one failure does not hide the other snapshot.
+    std::vector<CameraSnapshot> query_all() const;
 
   private:
     struct Entry {
@@ -25,6 +31,7 @@ class RkAiqManager {
         std::unique_ptr<AiqController> controller;
     };
     std::map<IspCameraId, Entry> cameras_;
-    bool initialized_ = false;
+    bool initialized_ = false, stopping_ = false;
+    bool before_started_ = false, after_started_ = false;
 };
 } // namespace isp

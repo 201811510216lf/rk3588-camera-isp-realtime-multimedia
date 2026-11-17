@@ -17,6 +17,9 @@ struct IspCameraEvidence {
     bool output_valid = false;
     bool live_evidence = false;
     std::vector<std::string> enabled_path;
+    std::string configured_isp_entity;
+    std::string output_entity;
+    std::vector<MediaRoleHint> output_role_hints;
     std::string isp_generation = "UNKNOWN";
     std::vector<std::string> errors;
     bool valid() const { return mapping_valid && output_valid; }

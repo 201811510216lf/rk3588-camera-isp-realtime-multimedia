@@ -1,0 +1,45 @@
+Media controller API version 6.1.0
+Media device information
+------------------------
+driver          rkisp
+model           synthetic-role-fixture-only
+bus info        platform:fixture
+Device topology
+- entity 10: fixture sensor C (1 pad, 1 link)
+    type V4L2 subdev subtype Sensor flags 0
+    device node name /dev/v4l-subdev90
+    pad0: Source
+        -> "fixture-mipi-csi2":0 [ENABLED]
+- entity 20: fixture-mipi-csi2 (2 pads, 2 links)
+    type V4L2 subdev subtype Unknown flags 0
+    device node name /dev/v4l-subdev91
+    pad0: Sink
+        <- "fixture sensor C":0 [ENABLED]
+    pad1: Source
+        -> "fixture-rkcif":0 [ENABLED]
+- entity 30: fixture-rkcif (2 pads, 2 links)
+    type V4L2 subdev subtype Unknown flags 0
+    device node name /dev/v4l-subdev92
+    pad0: Sink
+        <- "fixture-mipi-csi2":1 [ENABLED]
+    pad1: Source
+        -> "fixture-isp":0 [ENABLED]
+- entity 40: fixture-isp (3 pads, 3 links)
+    type V4L2 subdev subtype Unknown flags 0
+    device node name /dev/v4l-subdev93
+    pad0: Sink
+        <- "fixture-rkcif":1 [ENABLED]
+    pad1: Source
+        -> "fixture-mainpath":0 [ENABLED]
+    pad2: Source
+        -> "fixture-selfpath":0 []
+- entity 50: fixture-mainpath (1 pad, 1 link)
+    type Node subtype V4L flags 0
+    device node name /dev/video73
+    pad0: Sink
+        <- "fixture-isp":1 [ENABLED]
+- entity 60: fixture-selfpath (1 pad, 1 link)
+    type Node subtype V4L flags 0
+    device node name /dev/video74
+    pad0: Sink
+        <- "fixture-isp":2 []

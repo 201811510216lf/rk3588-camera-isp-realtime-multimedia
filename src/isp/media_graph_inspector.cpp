@@ -1,6 +1,7 @@
 #include "isp/media_graph_inspector.h"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -186,6 +187,59 @@ const MediaPadInfo *pad(const MediaEntityInfo &e, uint32_t id) {
 std::string normalized_format(std::string value) { return value == "NM12" ? "NV12M" : value; }
 } // namespace
 
+const char *to_string(MediaEntityRole role) {
+    switch (role) {
+    case MediaEntityRole::Sensor:
+        return "SENSOR";
+    case MediaEntityRole::MipiCsi:
+        return "MIPI_CSI";
+    case MediaEntityRole::Cif:
+        return "CIF";
+    case MediaEntityRole::Isp:
+        return "ISP";
+    case MediaEntityRole::Mainpath:
+        return "MAINPATH";
+    case MediaEntityRole::Selfpath:
+        return "SELFPATH";
+    case MediaEntityRole::VideoNode:
+        return "VIDEO_NODE";
+    default:
+        return "UNKNOWN";
+    }
+}
+const char *to_string(MediaPadDirection direction) {
+    switch (direction) {
+    case MediaPadDirection::Sink:
+        return "SINK";
+    case MediaPadDirection::Source:
+        return "SOURCE";
+    default:
+        return "UNKNOWN";
+    }
+}
+std::vector<MediaRoleHint> classify_media_entity(const MediaEntityInfo &info) {
+    std::vector<MediaRoleHint> result;
+    if (std::regex_search(info.function, std::regex(R"(\bsubtype\s+Sensor\b)", std::regex::icase)))
+        result.push_back({MediaEntityRole::Sensor, "REPORTED_FUNCTION"});
+    std::string name = info.name;
+    for (char &c : name)
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    auto hint = [&](MediaEntityRole role, const char *pattern) {
+        if (std::regex_search(name, std::regex(pattern)))
+            result.push_back({role, "ENTITY_NAME_HINT"});
+    };
+    // These tokens describe what the entity is called, not what hardware is present.
+    hint(MediaEntityRole::MipiCsi, R"((^|[^a-z0-9])(mipi|csi[0-9]*|dphy[0-9]*)([^a-z0-9]|$))");
+    hint(MediaEntityRole::Cif, R"((^|[^a-z0-9])(rkcif|cif)([^a-z0-9]|$))");
+    hint(MediaEntityRole::Isp, R"((^|[^a-z0-9])isp([^a-z0-9]|$)|rkisp[-_]isp[-_]subdev)");
+    hint(MediaEntityRole::Mainpath, R"((^|[^a-z0-9])mainpath([^a-z0-9]|$))");
+    hint(MediaEntityRole::Selfpath, R"((^|[^a-z0-9])selfpath([^a-z0-9]|$))");
+    if (!info.device_node.empty() &&
+        std::regex_search(info.function, std::regex(R"(^type\s+Node\b)", std::regex::icase)))
+        result.push_back({MediaEntityRole::VideoNode, "REPORTED_NODE_TYPE"});
+    return result;
+}
+
 bool parse_media_graph(const std::string &text, const std::string &device, IspDeviceInfo *out,
                        std::string *error) {
     if (error)
@@ -279,6 +333,8 @@ bool parse_media_graph(const std::string &text, const std::string &device, IspDe
     }
     if (out->entities.empty())
         return fail(error, "no structured media entities found");
+    for (auto &info : out->entities)
+        info.role_hints = classify_media_entity(info);
     for (const auto &link : out->links) {
         const auto *source = entity(*out, link.source_entity), *sink = entity(*out, link.sink_entity);
         if (!source || !sink || !pad(*source, link.source_pad) || !pad(*sink, link.sink_pad))
@@ -306,7 +362,8 @@ bool parse_capture_info(const std::string &text, const std::string &node, IspOut
     const std::regex stride(R"(^Bytes per Line\s*:\s*([0-9]+).*$)");
     const std::regex image(R"(^Size Image\s*:\s*([0-9]+).*$)");
     const std::regex advertised(R"(^\[[0-9]+\]:\s*'([^']+)'.*$)");
-    bool active = false;
+    const std::regex enumeration_type(R"(^Type\s*:\s*(.*)$)");
+    bool active = false, capture_parameters = false, capture_enumeration = false;
     size_t current_plane = 0;
     std::istringstream input(text);
     std::string raw;
@@ -319,6 +376,14 @@ bool parse_capture_info(const std::string &text, const std::string &node, IspOut
             out->capture_capable = true;
         if (line == "Streaming")
             out->streaming_capable = true;
+        if (line.rfind("Stream Parameters", 0) == 0)
+            capture_parameters = line.rfind("Stream Parameters Video Capture", 0) == 0;
+        else if (line.rfind("Format ", 0) == 0 || line.rfind("ioctl:", 0) == 0)
+            capture_parameters = false;
+        if (line.rfind("ioctl:", 0) == 0)
+            capture_enumeration = false;
+        if (std::regex_match(line, m, enumeration_type))
+            capture_enumeration = m[1] == "Video Capture" || m[1] == "Video Capture Multiplanar";
         if (line.rfind("Format Video Capture", 0) == 0) {
             if (active || !out->active_format.empty())
                 return fail(error, "multiple active capture formats are ambiguous");
@@ -327,12 +392,14 @@ bool parse_capture_info(const std::string &text, const std::string &node, IspOut
         } else if (line.rfind("Format ", 0) == 0 || line.rfind("Stream Parameters", 0) == 0 ||
                    line.rfind("ioctl:", 0) == 0)
             active = false;
-        if (std::regex_match(line, m, fps)) {
+        if (capture_parameters && std::regex_match(line, m, fps)) {
+            if (out->fps_denominator)
+                return fail(error, "multiple capture frame rate values are ambiguous");
             if (!number(m[1], &out->fps_numerator) || !number(m[2], &out->fps_denominator) ||
                 !out->fps_denominator)
                 return fail(error, "invalid capture frame rate");
         }
-        if (std::regex_match(line, m, advertised))
+        if (capture_enumeration && std::regex_match(line, m, advertised))
             out->advertised_formats.push_back(normalized_format(m[1]));
         if (!active)
             continue;

@@ -840,7 +840,8 @@ void DualCameraPipeline::cleanup() {
     for (auto &output : impl_->video)
         output.close();
     if (impl_->config.isp_readiness) {
-        const auto stopped = impl_->config.isp_readiness->before_stream_stop();
+        const auto stopped = isp::invoke_readiness_operation(
+            "before_stream_stop", [&] { return impl_->config.isp_readiness->before_stream_stop(); });
         if (!stopped.ok())
             impl_->fail("ISP pre-STREAMOFF cleanup failed: " + isp::result_json(stopped));
     }
@@ -850,7 +851,8 @@ void DualCameraPipeline::cleanup() {
         (void)impl_->isp_health.capture_stopped(id);
     }
     if (impl_->config.isp_readiness) {
-        const auto stopped = impl_->config.isp_readiness->after_stream_stop();
+        const auto stopped = isp::invoke_readiness_operation(
+            "after_stream_stop", [&] { return impl_->config.isp_readiness->after_stream_stop(); });
         if (!stopped.ok())
             impl_->fail("ISP shutdown failed: " + isp::result_json(stopped));
     }
@@ -933,7 +935,8 @@ bool DualCameraPipeline::run(std::string *error) {
         p.config.isp_readiness = std::make_shared<isp::IspPipelineCoordinator>(std::move(isp_config));
     }
     if (p.config.isp_readiness) {
-        const auto ready = p.config.isp_readiness->before_stream();
+        const auto ready = isp::invoke_readiness_operation(
+            "before_stream", [&] { return p.config.isp_readiness->before_stream(); });
         if (!ready.ok()) {
             if (error)
                 *error = isp::result_json(ready);
@@ -1013,7 +1016,8 @@ bool DualCameraPipeline::run(std::string *error) {
         }
     }
     if (p.config.isp_readiness) {
-        const auto ready = p.config.isp_readiness->after_stream();
+        const auto ready = isp::invoke_readiness_operation(
+            "after_stream", [&] { return p.config.isp_readiness->after_stream(); });
         if (!ready.ok()) {
             if (error)
                 *error = isp::result_json(ready);
@@ -1231,21 +1235,26 @@ bool DualCameraPipeline::run(std::string *error) {
                 isp::IspStatus status;
                 status.camera_id = id;
                 if (p.config.isp_readiness)
-                    status = p.config.isp_readiness->status(id);
+                    status = isp::query_readiness_status(*p.config.isp_readiness, id);
                 else {
                     status.state = isp::IspRuntimeState::Unavailable;
                     status.message = "UNVERIFIED_ISP diagnostic capture";
                 }
-                if (status.state == isp::IspRuntimeState::Error ||
-                    status.state == isp::IspRuntimeState::OwnershipConflict ||
-                    status.state == isp::IspRuntimeState::ConfigMismatch)
+                const auto runtime = isp::evaluate_runtime_status(
+                    id, status, p.config.allow_unverified_isp && !p.config.strict_isp_ready);
+                if (!runtime.ready && (status.state == isp::IspRuntimeState::Ready ||
+                                       status.state == isp::IspRuntimeState::Running)) {
+                    status.state = isp::IspRuntimeState::Degraded;
+                    status.hardware_confirmed = false;
+                    status.message = runtime.result.message + "; " + status.message;
+                }
+                if (!runtime.result.ok())
                     (void)p.isp_health.record_error(id);
                 (void)p.isp_health.observe_service(status, steady_now_ns());
                 if (!p.isp_health_log->append(isp::health_json(p.isp_health.snapshot(id, steady_now_ns()))))
                     p.health.error("isp_health_log");
-                if (status.state == isp::IspRuntimeState::OwnershipConflict ||
-                    status.state == isp::IspRuntimeState::ConfigMismatch)
-                    p.fail("ISP ownership/configuration changed during capture");
+                if (!runtime.result.ok())
+                    p.fail("ISP runtime check failed: " + isp::result_json(runtime.result));
             }
             const auto metrics = runtime::sample_system(p.config.output_dir, p.config.minimum_free_bytes);
             std::ostringstream line;
@@ -1330,7 +1339,8 @@ bool DualCameraPipeline::run(std::string *error) {
     p.sync_diag.close();
     bool stop_ok = true;
     if (p.config.isp_readiness) {
-        const auto stopped = p.config.isp_readiness->before_stream_stop();
+        const auto stopped = isp::invoke_readiness_operation(
+            "before_stream_stop", [&] { return p.config.isp_readiness->before_stream_stop(); });
         if (!stopped.ok())
             p.fail("ISP pre-STREAMOFF cleanup failed: " + isp::result_json(stopped));
     }
@@ -1345,7 +1355,8 @@ bool DualCameraPipeline::run(std::string *error) {
     for (uint32_t id = 0; id < 2; ++id)
         (void)p.isp_health.capture_stopped(id);
     if (p.config.isp_readiness) {
-        const auto stopped = p.config.isp_readiness->after_stream_stop();
+        const auto stopped = isp::invoke_readiness_operation(
+            "after_stream_stop", [&] { return p.config.isp_readiness->after_stream_stop(); });
         if (!stopped.ok())
             p.fail("ISP shutdown failed: " + isp::result_json(stopped));
     }

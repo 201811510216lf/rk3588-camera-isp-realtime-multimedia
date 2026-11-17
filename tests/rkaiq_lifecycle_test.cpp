@@ -14,6 +14,8 @@ struct Trace {
     std::string fail;
     bool initialized = false, prepared = false, running = false, mismatch = false, unsupported = false;
     bool bad_iq = false, info_throws = false, reported_ready = false;
+    bool deinit_fails = false, readback_supported = true, wrong_sensor = false, wrong_owner = false;
+    uint32_t readback_queries = 0;
     uint32_t status_queries = 0;
     ControlSnapshot values;
 };
@@ -64,10 +66,15 @@ class Fake final : public IRkAiqBackend {
     IspControlResult query_capabilities(IspControlCapabilities *c) const override {
         *c = {};
         c->ae_mode = c->awb_mode = c->exposure_time = c->analog_gain = !t_->unsupported;
-        c->readback = true;
+        c->readback = t_->readback_supported;
         c->exposure_us = {1, 100000};
         c->gain = {1, 16};
-        return success("caps");
+        auto r = success("caps");
+        if (t_->fail == "caps") {
+            r.status = ControlStatus::BackendError;
+            r.message = "injected capability failure";
+        }
+        return r;
     }
     IspControlResult query_status(IspStatus *s) const override {
         ++t_->status_queries;
@@ -78,10 +85,22 @@ class Fake final : public IRkAiqBackend {
                        : (t_->running ? IspRuntimeState::Running : IspRuntimeState::Discovered);
         s->backend = info();
         s->hardware_confirmed = true;
+        if (t_->wrong_sensor)
+            s->sensor.entity = "unrelated-sensor";
+        if (t_->wrong_owner)
+            s->ownership = IspAiqOwnershipMode::ExternalService;
         s->iq.loaded = Confirmation::Confirmed;
-        return success("status");
+        s->controls = t_->values; // A partial backend status must not substitute for authoritative readback.
+        s->controls.hardware_confirmed = true;
+        auto r = success("status");
+        if (t_->fail == "status") {
+            r.status = ControlStatus::BackendError;
+            r.message = "injected status failure";
+        }
+        return r;
     }
     IspControlResult read_controls(ControlSnapshot *c) const override {
+        ++t_->readback_queries;
         *c = t_->values;
         if (t_->fail == "readback") {
             auto r = success("readback");
@@ -132,7 +151,7 @@ class Fake final : public IRkAiqBackend {
     IspControlResult step(const char *op) {
         t_->calls.push_back(op);
         auto r = success(op);
-        if (t_->fail == op) {
+        if (t_->fail == op || (t_->deinit_fails && std::string(op) == "deinit")) {
             r.status = ControlStatus::BackendError;
             r.message = "injected failure";
         }
@@ -261,6 +280,123 @@ void failures(const AiqCameraConfig &config) {
     assert(service.shutdown().ok());
     assert(t->calls.empty());
 }
+void snapshot_failures(const AiqCameraConfig &config) {
+    auto trace = std::make_shared<Trace>();
+    AiqController controller(config, std::make_unique<Fake>(trace), no_owner());
+    assert(controller.initialize().ok() && controller.prepare().ok() && controller.start().ok());
+    trace->values.exposure_us = 1000;
+    trace->values.analog_gain = 3;
+    trace->values.ae_mode = AeMode::Manual;
+    for (const auto *failure : {"status", "caps", "readback"}) {
+        trace->fail = failure;
+        IspStatus status;
+        auto result = controller.query(&status);
+        assert(result.status == ControlStatus::BackendError && !result.hardware_confirmed);
+        assert(status.state == IspRuntimeState::Error && !status.hardware_confirmed);
+        assert(!status.controls.exposure_us && !status.controls.ae_mode &&
+               !status.controls.hardware_confirmed);
+    }
+    trace->fail.clear();
+    trace->wrong_sensor = true;
+    IspStatus identity_status;
+    assert(controller.query(&identity_status).status == ControlStatus::ConfigMismatch);
+    assert(identity_status.state == IspRuntimeState::ConfigMismatch && !identity_status.hardware_confirmed);
+    trace->wrong_sensor = false;
+    trace->wrong_owner = true;
+    assert(controller.query(&identity_status).status == ControlStatus::OwnershipConflict);
+    trace->wrong_owner = false;
+    ControlSnapshot values;
+    trace->values.analog_gain = std::numeric_limits<double>::quiet_NaN();
+    assert(controller.read_controls(&values).status == ControlStatus::BackendError);
+    assert(!values.analog_gain && !values.exposure_us && !values.hardware_confirmed);
+    auto invalid_readback = controller.set_ae_mode(AeMode::Manual);
+    assert(invalid_readback.status == ControlStatus::BackendError && invalid_readback.request_accepted);
+    trace->values.analog_gain = 3;
+    trace->values.ae_mode = static_cast<AeMode>(99);
+    assert(controller.read_controls(&values).status == ControlStatus::BackendError);
+    trace->values.ae_mode = AeMode::Manual;
+    trace->values.analog_gain = 100;
+    assert(controller.read_controls(&values).status == ControlStatus::BackendError);
+    trace->values.analog_gain = 3;
+    trace->readback_supported = false;
+    auto before = trace->readback_queries;
+    assert(controller.read_controls(&values).status == ControlStatus::Unsupported);
+    IspStatus status;
+    assert(controller.query(&status).ok());
+    assert(!status.controls.exposure_us && !status.controls.hardware_confirmed);
+    assert(trace->readback_queries == before);
+}
+void retained_failure_requires_cleanup(const AiqCameraConfig &config) {
+    for (const auto *failure : {"init", "prepare"}) {
+        auto trace = std::make_shared<Trace>();
+        trace->fail = failure;
+        trace->deinit_fails = true;
+        AiqController controller(config, std::make_unique<Fake>(trace), no_owner());
+        auto result = controller.initialize();
+        if (result.ok())
+            result = controller.prepare();
+        assert(!result.ok());
+        const auto count = trace->calls.size();
+        assert(controller.prepare().status == ControlStatus::InvalidState);
+        assert(controller.start().status == ControlStatus::InvalidState);
+        assert(trace->calls.size() == count);
+        IspStatus status;
+        assert(!controller.query(&status).ok() && status.state == IspRuntimeState::Error);
+        assert(trace->status_queries == 0);
+        trace->fail.clear();
+        trace->deinit_fails = false;
+        assert(controller.shutdown().ok());
+        assert(controller.initialize().ok() && controller.prepare().ok() && controller.start().ok());
+        trace->fail = "stop";
+        assert(!controller.stop().ok());
+        trace->fail.clear();
+        assert(controller.stop().ok());
+        assert(controller.start().status == ControlStatus::InvalidState);
+        assert(controller.deinitialize().ok());
+    }
+}
+void manager_stopping_requires_full_cleanup(const AiqCameraConfig &config) {
+    auto first_config = config;
+    first_config.stop_order = AiqStopOrder::BeforeStreamOff;
+    auto second_config = config;
+    second_config.camera_id = 1;
+    second_config.sensor_entity = "fixture-sensor1";
+    second_config.isp_instance = "fixture-isp1";
+    second_config.start_order = AiqStartOrder::AfterStream;
+    second_config.stop_order = AiqStopOrder::AfterStreamOff;
+    for (const bool failed_full_shutdown : {false, true}) {
+        auto first = std::make_shared<Trace>(), second = std::make_shared<Trace>();
+        RkAiqManager manager;
+        assert(manager.add_camera(first_config, std::make_unique<Fake>(first), no_owner()).ok());
+        assert(manager.add_camera(second_config, std::make_unique<Fake>(second), no_owner()).ok());
+        assert(manager.initialize_all().ok());
+        assert(manager.start_phase(AiqStartOrder::BeforeStream).ok());
+        if (failed_full_shutdown) {
+            first->fail = "stop";
+            assert(!manager.shutdown_all().ok());
+        } else
+            assert(manager.shutdown_phase(AiqStopOrder::BeforeStreamOff).ok());
+        const auto calls_first = first->calls.size(), calls_second = second->calls.size();
+        assert(manager.start_phase(AiqStartOrder::AfterStream).status == ControlStatus::InvalidState);
+        assert(first->calls.size() == calls_first && second->calls.size() == calls_second);
+        assert(!second->running);
+        assert(manager.initialize_all().status == ControlStatus::InvalidState);
+        first->fail.clear();
+        assert(manager.shutdown_all().ok());
+        assert(manager.initialize_all().ok());
+        assert(manager.start_phase(AiqStartOrder::BeforeStream).ok());
+        assert(manager.start_phase(AiqStartOrder::AfterStream).ok());
+        assert(first->running && second->running);
+    }
+    RkAiqManager empty;
+    assert(empty.shutdown_phase(AiqStopOrder::BeforeStreamOff).ok());
+    auto trace = std::make_shared<Trace>();
+    assert(empty.add_camera(config, std::make_unique<Fake>(trace), no_owner()).status ==
+           ControlStatus::InvalidState);
+    assert(empty.initialize_all().status == ControlStatus::InvalidState);
+    assert(empty.shutdown_all().ok());
+    assert(empty.add_camera(config, std::make_unique<Fake>(trace), no_owner()).ok());
+}
 void manager(const AiqCameraConfig &config) {
     auto a = std::make_shared<Trace>(), b = std::make_shared<Trace>();
     b->fail = "prepare";
@@ -277,6 +413,23 @@ void manager(const AiqCameraConfig &config) {
     b->fail.clear();
     assert(m.initialize_all().ok());
     assert(m.start_phase(AiqStartOrder::BeforeStream).ok());
+    const auto count_a = a->calls.size(), count_b = b->calls.size();
+    assert(m.start_phase(AiqStartOrder::BeforeStream).status == ControlStatus::InvalidState);
+    assert(m.start_phase(static_cast<AiqStartOrder>(99)).status == ControlStatus::InvalidArgument);
+    assert(m.shutdown_phase(static_cast<AiqStopOrder>(99)).status == ControlStatus::InvalidArgument);
+    assert(a->running && b->running && a->calls.size() == count_a && b->calls.size() == count_b);
+    a->values.ae_mode = AeMode::Manual;
+    b->values.awb_mode = AwbMode::Auto;
+    auto snapshots = m.query_all();
+    assert(snapshots.size() == 2 && snapshots[0].result.ok() && snapshots[1].result.ok());
+    assert(snapshots[0].status.camera_id == 0 && snapshots[1].status.camera_id == 1);
+    assert(snapshots[0].status.controls.ae_mode == AeMode::Manual);
+    assert(snapshots[1].status.controls.awb_mode == AwbMode::Auto);
+    a->fail = "readback";
+    snapshots = m.query_all();
+    assert(!snapshots[0].result.ok() && snapshots[1].result.ok());
+    assert(!snapshots[0].status.controls.ae_mode && snapshots[1].status.controls.awb_mode == AwbMode::Auto);
+    a->fail.clear();
     assert(m.shutdown_phase(AiqStopOrder::BeforeStreamOff).ok());
     assert(a->running && b->running);
     assert(m.shutdown_phase(AiqStopOrder::AfterStreamOff).ok());
@@ -314,6 +467,9 @@ int main() {
     const auto c = configuration(root);
     normal(c);
     failures(c);
+    snapshot_failures(c);
+    retained_failure_requires_cleanup(c);
+    manager_stopping_requires_full_cleanup(c);
     manager(c);
     IqValidation iq;
     assert(validate_iq_file(c, &iq).ok() && iq.loaded == Confirmation::NotMeasured);

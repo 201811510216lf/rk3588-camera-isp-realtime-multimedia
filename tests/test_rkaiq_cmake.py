@@ -64,6 +64,19 @@ class RkAiqCMakeTest(unittest.TestCase):
         (self.root / "libfixture.so").write_bytes(b"!<arch>\n" + b" " * 40)
         self.run_check(body, "static archives/unknown formats are unsupported")
 
+    def test_header_without_libraries_fails(self):
+        body = self.sdk_fixture(183) + '\nset(RKAIQ_LIBRARIES "" CACHE STRING "" FORCE)'
+        self.run_check(body, "set RKAIQ_LIBRARIES")
+
+    def test_directories_cannot_masquerade_as_header_or_adapter(self):
+        body = self.sdk_fixture(183)
+        header = self.root / "include" / "rk_aiq_user_api2_sysctl.h"
+        header.unlink(); header.mkdir()
+        self.run_check(body, "missing actual")
+        header.rmdir(); header.write_text("// negative fixture only\n")
+        self.run_check(body + f'\nset(RKAIQ_ADAPTER_SOURCE "{self.root.as_posix()}" CACHE FILEPATH "" FORCE)',
+                       "no verified BSP API port")
+
 
 if __name__ == "__main__":
     unittest.main()

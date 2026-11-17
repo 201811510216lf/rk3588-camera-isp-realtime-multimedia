@@ -1,5 +1,7 @@
 #pragma once
 
+#include "isp/sensor_registry.h"
+
 #include <cstdint>
 #include <string>
 
@@ -34,12 +36,14 @@ struct MediaGraphValidationReport {
     std::string camera0_source;
     std::string camera1_source;
     std::string error;
+    std::vector<isp::IspCameraEvidence> cameras;
 
     bool ok() const {
         return graph_available && camera0_available && camera1_available && independent_nodes &&
                nv12_output && sensor_mapping && dimensions_match && fps_match;
     }
     std::string summary() const;
+    std::string json() const;
 };
 
 // Executes only read-only media-ctl/v4l2-ctl queries when no capture files are

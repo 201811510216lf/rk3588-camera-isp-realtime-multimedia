@@ -74,7 +74,7 @@ class AiqController {
     std::unique_ptr<isp::IRkAiqBackend> backend_;
     isp::OwnershipEvidence ownership_;
     isp::IqValidation iq_;
-    bool initialized_ = false, prepared_ = false, running_ = false;
+    bool initialized_ = false, prepared_ = false, running_ = false, faulted_ = false;
     mutable std::mutex mutex_;
     int ownership_fd_ = -1;
     int isp_ownership_fd_ = -1;
@@ -85,5 +85,7 @@ class AiqController {
     isp::IspControlResult shutdown_locked();
     isp::IspControlResult check_control(const char *operation,
                                         isp::IspControlCapabilities *capabilities) const;
+    isp::IspControlResult read_controls_locked(isp::ControlSnapshot *controls,
+                                               const isp::IspControlCapabilities &capabilities) const;
     void release_ownership_lock();
 };

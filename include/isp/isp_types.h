@@ -124,4 +124,5 @@ const char *to_string(Confirmation value);
 const char *to_string(EvidenceSource value);
 std::string result_json(const IspControlResult &value);
 std::string status_json(const IspStatus &value);
+std::string control_snapshot_json(const ControlSnapshot &value);
 } // namespace isp

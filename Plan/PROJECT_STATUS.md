@@ -25,3 +25,7 @@
 本轮Windows/Ninja完整25/25、MSVC ASan25/25、ISP四组各100次压力通过；旧LinuxCI不是本轮结果。真实目标SDK/myDemo编译、RKISP30/3A、Sensor/IQ与24/72h仍BLOCKED_HARDWARE，详见[专项交付](RKISP/FINAL_RKISP_DELIVERY_REPORT.md)。
 
 上传后新增验证：0017938的GitHub Linux普通与ASan+UBSan均25/25通过，各800次压力通过，见RKISP/07_TEST_REPORT.md。真实SDK与硬件状态不变。
+
+## 当前main增量
+
+基于7376c5a再次补强既有控制层：生命周期故障锁定、双路phase与query_all、readiness异常/运行期失效、Sensor拓扑JSON、共用CLI查询与SDK负例检测。Windows/MSVC与ASan各26/26通过，8组各100次压力通过。当前增量状态见[docs/PROJECT_STATUS](../docs/PROJECT_STATUS.md)、[执行证据](../docs/CODEX_EXECUTION_STATUS.md)与[增量报告](RKISP/INCREMENTAL_CONTROL_REPORT.md)。真实SDK和板端仍BLOCKED_HARDWARE。

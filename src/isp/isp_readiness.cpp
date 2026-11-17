@@ -1,6 +1,7 @@
 #include "isp/isp_readiness.h"
 #include "isp/rkaiq_controller.h"
 
+#include <exception>
 #include <map>
 #include <utility>
 
@@ -15,11 +16,56 @@ IspControlResult result(ControlStatus code, IspCameraId id, std::string message)
     value.message = std::move(message);
     return value;
 }
-bool hard_error(const IspStatus &status) {
-    return status.state == IspRuntimeState::OwnershipConflict ||
-           status.state == IspRuntimeState::ConfigMismatch || status.state == IspRuntimeState::Error ||
-           status.iq.sensor_match == Confirmation::Mismatch ||
-           status.iq.sdk_compatible == Confirmation::Mismatch || status.iq.loaded == Confirmation::Mismatch;
+bool valid_state(IspRuntimeState state) {
+    switch (state) {
+    case IspRuntimeState::Unknown:
+    case IspRuntimeState::Discovered:
+    case IspRuntimeState::Ready:
+    case IspRuntimeState::Running:
+    case IspRuntimeState::Degraded:
+    case IspRuntimeState::Unavailable:
+    case IspRuntimeState::OwnershipConflict:
+    case IspRuntimeState::ConfigMismatch:
+    case IspRuntimeState::Error:
+        return true;
+    }
+    return false;
+}
+bool valid_owner(IspAiqOwnershipMode owner) {
+    return owner == IspAiqOwnershipMode::ExternalService || owner == IspAiqOwnershipMode::InProcess ||
+           owner == IspAiqOwnershipMode::Unavailable;
+}
+bool confirmed_status(const IspStatus &status) {
+    return status.backend.real_hardware_backend && status.backend.evidence == EvidenceSource::LiveDevice &&
+           status.hardware_confirmed && status.sensor.confirmed && !status.sensor.entity.empty() &&
+           status.sensor.evidence == EvidenceSource::LiveDevice &&
+           status.ownership != IspAiqOwnershipMode::Unavailable && status.iq.file_readable &&
+           status.iq.sensor_match == Confirmation::Confirmed &&
+           status.iq.sdk_compatible == Confirmation::Confirmed &&
+           status.iq.loaded == Confirmation::Confirmed &&
+           (status.state == IspRuntimeState::Ready || status.state == IspRuntimeState::Running);
+}
+IspReadiness invalid_status(IspCameraId expected_id, const IspStatus &status) {
+    IspReadiness output;
+    output.result = result(ControlStatus::Ok, expected_id, "ISP status shape accepted");
+    if (expected_id > 1 || status.camera_id != expected_id || !valid_state(status.state) ||
+        !valid_owner(status.ownership)) {
+        output.result = result(ControlStatus::ConfigMismatch, expected_id,
+                               "Invalid logical Camera identity, runtime state or ownership mode");
+    } else if (status.state == IspRuntimeState::OwnershipConflict) {
+        output.result = result(ControlStatus::OwnershipConflict, expected_id,
+                               "ISP ownership prevents capture: " + status.message);
+    } else if (status.state == IspRuntimeState::Error) {
+        output.result =
+            result(ControlStatus::BackendError, expected_id, "ISP backend failed: " + status.message);
+    } else if (status.state == IspRuntimeState::ConfigMismatch ||
+               status.iq.sensor_match == Confirmation::Mismatch ||
+               status.iq.sdk_compatible == Confirmation::Mismatch ||
+               status.iq.loaded == Confirmation::Mismatch) {
+        output.result = result(ControlStatus::ConfigMismatch, expected_id,
+                               "ISP/Sensor/IQ configuration prevents capture: " + status.message);
+    }
+    return output;
 }
 } // namespace
 IspControlResult validate_capture_binding(const IspConfig &config, const CaptureBinding &capture) {
@@ -37,23 +83,40 @@ IspControlResult validate_capture_binding(const IspConfig &config, const Capture
     }
     return result(ControlStatus::Ok, 0, "Explicit logical Camera bindings match capture configuration");
 }
+IspReadiness evaluate_runtime_status(IspCameraId expected_id, const IspStatus &status,
+                                     bool allow_unverified) {
+    auto output = invalid_status(expected_id, status);
+    if (!output.result.ok())
+        return output;
+    output.ready = confirmed_status(status);
+    if (output.ready) {
+        output.result = result(ControlStatus::Ok, expected_id, "Live ISP runtime confirmation is intact");
+        output.result.hardware_confirmed = true;
+    } else if (allow_unverified) {
+        output.diagnostic_unverified = true;
+        output.result = result(ControlStatus::Ok, expected_id,
+                               "UNVERIFIED_ISP diagnostic capture: live ISP readiness is not confirmed");
+    } else {
+        output.result = result(ControlStatus::BackendUnavailable, expected_id,
+                               "ISP runtime readiness lost or unconfirmed; strict capture cannot continue");
+    }
+    return output;
+}
 IspReadiness evaluate_readiness(const AiqCameraConfig &config, const IspCameraEvidence &evidence,
                                 const IspStatus &status, bool allow_unverified) {
-    IspReadiness output;
+    auto output = invalid_status(config.camera_id, status);
+    if (!output.result.ok())
+        return output;
     output.result = result(ControlStatus::BackendUnavailable, config.camera_id,
                            "ISP readiness is not confirmed; source=NOT_MEASURED");
-    if (status.camera_id != config.camera_id || evidence.camera_id != config.camera_id ||
+    if (!valid_owner(config.ownership) || evidence.camera_id != config.camera_id ||
         (!status.sensor.entity.empty() && status.sensor.entity != config.sensor_entity) ||
+        (!evidence.sensor.identity.entity.empty() &&
+         evidence.sensor.identity.entity != config.sensor_entity) ||
+        (!evidence.graph.media_device.empty() && evidence.graph.media_device != config.media_device) ||
         (!evidence.output.video_node.empty() && evidence.output.video_node != config.video_node)) {
         output.result =
             result(ControlStatus::ConfigMismatch, config.camera_id, "Camera identity/node mismatch");
-        return output;
-    }
-    if (hard_error(status)) {
-        output.result =
-            result(status.state == IspRuntimeState::OwnershipConflict ? ControlStatus::OwnershipConflict
-                                                                      : ControlStatus::ConfigMismatch,
-                   config.camera_id, "Ownership/IQ/backend state prevents capture: " + status.message);
         return output;
     }
     if (status.ownership != IspAiqOwnershipMode::Unavailable && status.ownership != config.ownership) {
@@ -75,15 +138,13 @@ IspReadiness evaluate_readiness(const AiqCameraConfig &config, const IspCameraEv
         return output;
     }
     const bool verified =
-        evidence.valid() && evidence.live_evidence &&
+        evidence.valid() && evidence.live_evidence && evidence.graph.evidence == EvidenceSource::LiveDevice &&
+        evidence.output.evidence == EvidenceSource::LiveDevice && evidence.sensor.identity.confirmed &&
+        evidence.sensor.identity.evidence == EvidenceSource::LiveDevice &&
+        evidence.sensor.identity.entity == config.sensor_entity &&
         (evidence.isp_generation == "RKISP30_REPORTED" || status.backend.platform == "RKISP30") &&
-        status.backend.real_hardware_backend && status.backend.evidence == EvidenceSource::LiveDevice &&
-        status.hardware_confirmed && status.sensor.confirmed &&
-        status.sensor.evidence == EvidenceSource::LiveDevice &&
         status.sensor.entity == config.sensor_entity && status.ownership == config.ownership &&
-        status.iq.file_readable && status.iq.sensor_match == Confirmation::Confirmed &&
-        status.iq.sdk_compatible == Confirmation::Confirmed && status.iq.loaded == Confirmation::Confirmed &&
-        (status.state == IspRuntimeState::Ready || status.state == IspRuntimeState::Running);
+        confirmed_status(status);
     if (verified) {
         output.ready = true;
         output.result =
@@ -97,6 +158,45 @@ IspReadiness evaluate_readiness(const AiqCameraConfig &config, const IspCameraEv
     }
     return output;
 }
+IspControlResult invoke_readiness_operation(const char *operation,
+                                            const std::function<IspControlResult()> &callback) {
+    if (!operation || !callback)
+        return result(ControlStatus::InvalidArgument, 0, "Missing ISP operation callback");
+    try {
+        return callback();
+    } catch (const std::exception &error) {
+        auto failure =
+            result(ControlStatus::BackendError, 0, std::string("ISP provider exception: ") + error.what());
+        failure.operation = operation;
+        return failure;
+    } catch (...) {
+        auto failure = result(ControlStatus::BackendError, 0, "Unknown ISP provider exception");
+        failure.operation = operation;
+        return failure;
+    }
+}
+IspStatus query_readiness_status(const IspReadinessProvider &provider, IspCameraId id) {
+    IspStatus snapshot;
+    snapshot.camera_id = id;
+    const auto checked = invoke_readiness_operation("query_status", [&] {
+        snapshot = provider.status(id);
+        return result(ControlStatus::Ok, id, "ISP status callback returned");
+    });
+    if (!checked.ok()) {
+        snapshot = {};
+        snapshot.camera_id = id;
+        snapshot.state = IspRuntimeState::Error;
+        snapshot.message = checked.message;
+    } else if (snapshot.camera_id != id || id > 1) {
+        const auto reported_id = snapshot.camera_id;
+        snapshot = {};
+        snapshot.camera_id = id;
+        snapshot.state = IspRuntimeState::ConfigMismatch;
+        snapshot.message = "ISP provider returned Camera " + std::to_string(reported_id) +
+                           " for requested logical Camera " + std::to_string(id);
+    }
+    return snapshot;
+}
 
 struct IspPipelineCoordinator::Impl {
     IspConfig config;
@@ -104,8 +204,10 @@ struct IspPipelineCoordinator::Impl {
     BackendFactory factory;
     RkAiqManager manager;
     std::map<IspCameraId, IspCameraEvidence> evidence;
-    bool attempted = false;
-    bool prepared = false;
+    enum class Phase { Fresh, Preparing, Prepared, StreamActive, Stopping, Stopped, Failed };
+    Phase phase = Phase::Fresh;
+    bool before_stop_attempted = false;
+    bool before_stop_complete = false;
 };
 IspPipelineCoordinator::IspPipelineCoordinator(IspConfig config,
                                                std::unique_ptr<IMediaGraphInspector> inspector,
@@ -123,87 +225,146 @@ IspPipelineCoordinator::IspPipelineCoordinator(IspConfig config,
                                                  : create_unavailable_backend());
                            }};
 }
-IspPipelineCoordinator::~IspPipelineCoordinator() { (void)shutdown(); }
+IspPipelineCoordinator::~IspPipelineCoordinator() {
+    try {
+        (void)shutdown();
+    } catch (...) { /* A destructor cannot propagate backend/provider failures. */
+    }
+}
 IspControlResult IspPipelineCoordinator::before_stream() {
     auto &p = *impl_;
-    if (p.attempted)
+    if (p.phase != Impl::Phase::Fresh)
         return result(ControlStatus::InvalidState, 0, "ISP coordinator is single-use");
-    p.attempted = true;
-    auto checked = validate_config(p.config);
-    if (!checked.ok())
-        return checked;
-    const auto owner = discover_aiq_ownership();
-    for (const auto &camera : p.config.cameras) {
-        auto evidence = inspect_isp_camera(camera, *p.inspector);
-        if (camera.ownership == IspAiqOwnershipMode::InProcess &&
-            (!evidence.valid() || !evidence.live_evidence))
-            return result(ControlStatus::ConfigMismatch, camera.camera_id,
-                          "In-process context requires a verified live Sensor/ISP/output mapping");
-        p.evidence.emplace(camera.camera_id, std::move(evidence));
-        auto rc = p.manager.add_camera(camera, p.factory(camera, owner), owner);
-        if (!rc.ok()) {
-            (void)p.manager.shutdown_all();
-            return rc;
+    p.phase = Impl::Phase::Preparing;
+    auto started = invoke_readiness_operation("before_stream", [&] {
+        auto checked = validate_config(p.config);
+        if (!checked.ok())
+            return checked;
+        const auto owner = discover_aiq_ownership();
+        // Complete discovery for both Cameras before creating or starting any owned context.
+        for (const auto &camera : p.config.cameras) {
+            auto evidence = inspect_isp_camera(camera, *p.inspector);
+            if ((camera.ownership == IspAiqOwnershipMode::InProcess &&
+                 (!evidence.valid() || !evidence.live_evidence)) ||
+                (!evidence.graph.entities.empty() && !evidence.mapping_valid) ||
+                (!evidence.output.active_format.empty() && !evidence.output_valid))
+                return result(ControlStatus::ConfigMismatch, camera.camera_id,
+                              "Sensor/ISP/output mapping is missing or conflicts with capture configuration");
+            p.evidence.emplace(camera.camera_id, std::move(evidence));
         }
-    }
-    auto rc = p.manager.initialize_all();
-    if (!rc.ok())
-        return rc;
-    rc = p.manager.start_phase(AiqStartOrder::BeforeStream);
-    if (!rc.ok())
-        return rc;
-    for (const auto &camera : p.config.cameras) {
-        // BSP-declared after-stream contexts are prepared here, started and verified in after_stream().
-        if (camera.ownership == IspAiqOwnershipMode::InProcess &&
-            camera.start_order == AiqStartOrder::AfterStream)
-            continue;
-        const auto readiness = evaluate_readiness(camera, p.evidence.at(camera.camera_id),
-                                                  status(camera.camera_id), p.config.allow_unverified_isp);
-        if (!readiness.result.ok()) {
-            (void)p.manager.shutdown_all();
-            return readiness.result;
+        for (const auto &camera : p.config.cameras) {
+            auto registered = p.manager.add_camera(camera, p.factory(camera, owner), owner);
+            if (!registered.ok())
+                return registered;
         }
-    }
-    p.prepared = true;
-    return result(ControlStatus::Ok, 0,
-                  "ISP pre-stream phase accepted; after-stream verification still required");
+        auto ready = p.manager.initialize_all();
+        if (!ready.ok())
+            return ready;
+        ready = p.manager.start_phase(AiqStartOrder::BeforeStream);
+        if (!ready.ok())
+            return ready;
+        for (const auto &camera : p.config.cameras) {
+            if (camera.ownership == IspAiqOwnershipMode::InProcess &&
+                camera.start_order == AiqStartOrder::AfterStream)
+                continue;
+            const auto readiness =
+                evaluate_readiness(camera, p.evidence.at(camera.camera_id), status(camera.camera_id),
+                                   p.config.allow_unverified_isp);
+            if (!readiness.result.ok())
+                return readiness.result;
+        }
+        return result(ControlStatus::Ok, 0,
+                      "ISP pre-stream phase accepted; after-stream verification still required");
+    });
+    if (!started.ok()) {
+        const auto rollback =
+            invoke_readiness_operation("rollback_before_stream", [&] { return p.manager.shutdown_all(); });
+        if (!rollback.ok())
+            started.message += "; rollback failed: " + rollback.message;
+        p.phase = Impl::Phase::Failed;
+    } else
+        p.phase = Impl::Phase::Prepared;
+    return started;
 }
 IspControlResult IspPipelineCoordinator::after_stream() {
     auto &p = *impl_;
-    if (!p.prepared)
-        return result(ControlStatus::InvalidState, 0, "ISP pre-stream phase was not accepted");
-    auto rc = p.manager.start_phase(AiqStartOrder::AfterStream, true);
-    if (!rc.ok())
-        return rc;
-    for (const auto &camera : p.config.cameras) {
-        const auto readiness = evaluate_readiness(camera, p.evidence.at(camera.camera_id),
-                                                  status(camera.camera_id), p.config.allow_unverified_isp);
-        if (!readiness.result.ok())
-            return readiness.result;
-    }
-    return result(ControlStatus::Ok, 0,
-                  "ISP post-stream phase accepted; consult per-camera confirmation state");
+    if (p.phase != Impl::Phase::Prepared)
+        return result(ControlStatus::InvalidState, 0,
+                      "ISP after-stream phase is repeated, stopped or not prepared");
+    // Mark attempted before invoking the SDK so failure cannot be retried on an uncertain context.
+    p.phase = Impl::Phase::StreamActive;
+    return invoke_readiness_operation("after_stream", [&] {
+        auto ready = p.manager.start_phase(AiqStartOrder::AfterStream, true);
+        if (!ready.ok())
+            return ready;
+        for (const auto &camera : p.config.cameras) {
+            const auto readiness =
+                evaluate_readiness(camera, p.evidence.at(camera.camera_id), status(camera.camera_id),
+                                   p.config.allow_unverified_isp);
+            if (!readiness.result.ok())
+                return readiness.result;
+        }
+        return result(ControlStatus::Ok, 0,
+                      "ISP post-stream phase accepted; consult per-camera confirmation state");
+    });
 }
 IspControlResult IspPipelineCoordinator::shutdown() {
-    impl_->prepared = false;
-    return impl_->manager.shutdown_all();
+    auto &p = *impl_;
+    if (p.phase == Impl::Phase::Stopped)
+        return result(ControlStatus::Ok, 0, "ISP coordinator is already stopped");
+    const auto stopped = invoke_readiness_operation("shutdown", [&] { return p.manager.shutdown_all(); });
+    p.phase = stopped.ok() ? Impl::Phase::Stopped : Impl::Phase::Failed;
+    return stopped;
 }
 IspControlResult IspPipelineCoordinator::before_stream_stop() {
-    return impl_->manager.shutdown_phase(AiqStopOrder::BeforeStreamOff);
+    auto &p = *impl_;
+    if (p.phase == Impl::Phase::Stopped || p.before_stop_complete)
+        return result(ControlStatus::Ok, 0, "ISP pre-STREAMOFF phase is already complete");
+    p.phase = Impl::Phase::Stopping;
+    p.before_stop_attempted = true;
+    const auto stopped = invoke_readiness_operation(
+        "before_stream_stop", [&] { return p.manager.shutdown_phase(AiqStopOrder::BeforeStreamOff); });
+    p.before_stop_complete = stopped.ok();
+    return stopped;
 }
 IspControlResult IspPipelineCoordinator::after_stream_stop() {
-    auto result = impl_->manager.shutdown_phase(AiqStopOrder::AfterStreamOff);
-    if (!result.ok())
-        return result;
+    auto &p = *impl_;
+    if (p.phase == Impl::Phase::Stopped)
+        return result(ControlStatus::Ok, 0, "ISP coordinator is already stopped");
+    if (p.phase != Impl::Phase::Stopping || !p.before_stop_attempted)
+        return result(ControlStatus::InvalidState, 0,
+                      "ISP post-STREAMOFF cleanup requires the pre-STREAMOFF phase");
+    const auto stopped = invoke_readiness_operation(
+        "after_stream_stop", [&] { return p.manager.shutdown_phase(AiqStopOrder::AfterStreamOff); });
+    if (!stopped.ok())
+        return stopped;
+    if (!p.before_stop_complete)
+        return result(ControlStatus::BackendError, 0,
+                      "Pre-STREAMOFF cleanup failed; ISP ownership remains uncertain");
     return shutdown();
 }
 IspStatus IspPipelineCoordinator::status(IspCameraId id) const {
     IspStatus status;
     status.camera_id = id;
     const auto *controller = impl_->manager.controller(id);
-    if (controller)
-        (void)controller->query(&status);
-    else {
+    if (controller) {
+        const auto queried =
+            invoke_readiness_operation("query_status", [&] { return controller->query(&status); });
+        if (!queried.ok()) {
+            status.hardware_confirmed = false;
+            status.controls.hardware_confirmed = false;
+            status.iq.loaded = Confirmation::NotMeasured;
+            status.state = queried.status == ControlStatus::OwnershipConflict
+                               ? IspRuntimeState::OwnershipConflict
+                               : (queried.status == ControlStatus::ConfigMismatch
+                                      ? IspRuntimeState::ConfigMismatch
+                                      : (queried.status == ControlStatus::BackendUnavailable ||
+                                                 queried.status == ControlStatus::Unsupported
+                                             ? IspRuntimeState::Unavailable
+                                             : IspRuntimeState::Error));
+            status.message = queried.message;
+        }
+    } else {
         status.state = IspRuntimeState::Unavailable;
         status.message = "Camera has no configured AIQ controller";
     }

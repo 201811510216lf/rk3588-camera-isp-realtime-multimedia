@@ -135,12 +135,34 @@ std::string result_json(const IspControlResult &v) {
         << ",\"hardware_confirmed\":" << boolean(v.hardware_confirmed) << '}';
     return out.str();
 }
+std::string control_snapshot_json(const ControlSnapshot &value) {
+    const auto ae = value.ae_mode && (*value.ae_mode == AeMode::Auto || *value.ae_mode == AeMode::Manual)
+                        ? quote(*value.ae_mode == AeMode::Auto ? "AUTO" : "MANUAL")
+                        : "null";
+    const auto awb =
+        value.awb_mode && (*value.awb_mode == AwbMode::Auto || *value.awb_mode == AwbMode::Manual)
+            ? quote(*value.awb_mode == AwbMode::Auto ? "AUTO" : "MANUAL")
+            : "null";
+    std::ostringstream out;
+    out << "{\"ae_mode\":" << ae << ",\"awb_mode\":" << awb << ",\"exposure_us\":";
+    number(out, value.exposure_us);
+    out << ",\"analog_gain\":";
+    number(out, value.analog_gain);
+    out << ",\"hardware_confirmed\":" << boolean(value.hardware_confirmed) << '}';
+    return out.str();
+}
 std::string status_json(const IspStatus &v) {
     std::ostringstream out;
     out << "{\"camera_id\":" << v.camera_id << ",\"state\":" << quote(to_string(v.state))
         << ",\"ownership\":" << quote(to_string(v.ownership)) << ",\"backend_name\":" << quote(v.backend.name)
         << ",\"backend_version\":" << quote(v.backend.version)
         << ",\"sdk_version\":" << quote(v.backend.sdk_version)
+        << ",\"sdk_available\":" << boolean(v.backend.sdk_available) << ",\"sdk_version_source\":"
+        << quote(v.backend.sdk_version.empty() || v.backend.sdk_version == "UNKNOWN"
+                     ? "NOT_MEASURED"
+                     : (v.backend.evidence == EvidenceSource::TestBackend ? "MOCK_OR_TEST"
+                                                                          : "BACKEND_REPORTED"))
+        << ",\"real_hardware_backend\":" << boolean(v.backend.real_hardware_backend)
         << ",\"platform\":" << quote(v.backend.platform)
         << ",\"source\":" << quote(to_string(v.backend.evidence))
         << ",\"hardware_confirmed\":" << boolean(v.hardware_confirmed)
@@ -163,16 +185,22 @@ std::string status_json(const IspStatus &v) {
         << ",\"exposure_time\":" << boolean(v.capabilities.exposure_time)
         << ",\"analog_gain\":" << boolean(v.capabilities.analog_gain)
         << ",\"awb_mode\":" << boolean(v.capabilities.awb_mode)
-        << ",\"readback\":" << boolean(v.capabilities.readback) << "},\"controls\":{\"ae_mode\":"
-        << (v.controls.ae_mode ? quote(*v.controls.ae_mode == AeMode::Auto ? "AUTO" : "MANUAL") : "null")
-        << ",\"awb_mode\":"
-        << (v.controls.awb_mode ? quote(*v.controls.awb_mode == AwbMode::Auto ? "AUTO" : "MANUAL") : "null")
-        << ",\"exposure_us\":";
-    number(out, v.controls.exposure_us);
-    out << ",\"analog_gain\":";
-    number(out, v.controls.analog_gain);
-    out << ",\"hardware_confirmed\":" << boolean(v.controls.hardware_confirmed)
-        << "},\"message\":" << quote(v.message) << '}';
+        << ",\"readback\":" << boolean(v.capabilities.readback)
+        << ",\"hdr2\":" << boolean(v.capabilities.hdr2) << ",\"hdr3\":" << boolean(v.capabilities.hdr3)
+        << ",\"exposure_us_range\":{\"minimum\":";
+    number(out, v.capabilities.exposure_time ? std::optional<double>{v.capabilities.exposure_us.minimum}
+                                             : std::nullopt);
+    out << ",\"maximum\":";
+    number(out, v.capabilities.exposure_time ? std::optional<double>{v.capabilities.exposure_us.maximum}
+                                             : std::nullopt);
+    out << "},\"gain_range\":{\"minimum\":";
+    number(out,
+           v.capabilities.analog_gain ? std::optional<double>{v.capabilities.gain.minimum} : std::nullopt);
+    out << ",\"maximum\":";
+    number(out,
+           v.capabilities.analog_gain ? std::optional<double>{v.capabilities.gain.maximum} : std::nullopt);
+    out << "}},\"controls\":" << control_snapshot_json(v.controls) << ",\"message\":" << quote(v.message)
+        << '}';
     return out.str();
 }
 } // namespace isp

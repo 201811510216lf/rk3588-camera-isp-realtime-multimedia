@@ -51,6 +51,30 @@ IspControlResult call(const std::function<IspControlResult()> &operation) {
 bool equal(double actual, double expected) {
     return std::isfinite(actual) && std::abs(actual - expected) <= std::max(1e-6, std::abs(expected) * 1e-6);
 }
+bool valid_controls(const ControlSnapshot &values, const IspControlCapabilities &caps, std::string *error) {
+    if ((values.ae_mode && *values.ae_mode != AeMode::Auto && *values.ae_mode != AeMode::Manual) ||
+        (values.awb_mode && *values.awb_mode != AwbMode::Auto && *values.awb_mode != AwbMode::Manual)) {
+        *error = "Backend returned an invalid AE/AWB mode";
+        return false;
+    }
+    auto number_valid = [&](const std::optional<double> &value, const NumericControlRange &range,
+                            const char *name) {
+        if (!value)
+            return true;
+        if (!std::isfinite(*value) || *value <= 0) {
+            *error = std::string("Backend returned non-finite/non-positive ") + name;
+            return false;
+        }
+        if (std::isfinite(range.minimum) && std::isfinite(range.maximum) && range.maximum >= range.minimum &&
+            range.maximum > 0 && (*value < range.minimum || *value > range.maximum)) {
+            *error = std::string("Backend readback is outside the reported ") + name + " range";
+            return false;
+        }
+        return true;
+    };
+    return number_valid(values.exposure_us, caps.exposure_us, "exposure") &&
+           number_valid(values.analog_gain, caps.gain, "gain");
+}
 } // namespace
 
 AiqController::AiqController(AiqControllerConfig config) : config_(std::move(config)) {
@@ -105,7 +129,7 @@ isp::IspControlResult AiqController::decorate(isp::IspControlResult r) const {
     r.camera_id = camera_config_.camera_id;
     r.backend_name = info.name;
     r.backend_version = info.version;
-    r.hardware_confirmed = r.hardware_confirmed && info.real_hardware_backend &&
+    r.hardware_confirmed = r.ok() && r.hardware_confirmed && info.real_hardware_backend &&
                            info.evidence == isp::EvidenceSource::LiveDevice;
     if (info.name == "backend-info-error") {
         r.status = isp::ControlStatus::BackendError;
@@ -130,8 +154,9 @@ void AiqController::release_ownership_lock() {
 isp::IspControlResult AiqController::initialize() {
     using namespace isp;
     std::lock_guard<std::mutex> lock(mutex_);
-    if (initialized_)
-        return result(ControlStatus::InvalidState, "initialize", "Controller is already initialized");
+    if (initialized_ || faulted_)
+        return result(ControlStatus::InvalidState, "initialize",
+                      "Controller is already initialized or requires cleanup");
     if (camera_config_.ownership != IspAiqOwnershipMode::InProcess)
         return result(ControlStatus::Unsupported, "initialize",
                       "Only IN_PROCESS owns an AIQ context; external service lifecycle is never called");
@@ -228,19 +253,20 @@ isp::IspControlResult AiqController::initialize() {
     if (!r.ok()) {
         const auto rollback = call([&] { return backend_->deinitialize(); });
         if (!rollback.ok()) {
-            initialized_ = true;
+            initialized_ = faulted_ = true;
             r.message += "; rollback deinitialize failed: " + rollback.message;
         } else
             release_ownership_lock();
         return decorate(std::move(r));
     }
     initialized_ = true;
+    faulted_ = false;
     return decorate(std::move(r));
 }
 isp::IspControlResult AiqController::prepare() {
     using namespace isp;
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!initialized_ || prepared_ || running_)
+    if (!initialized_ || prepared_ || running_ || faulted_)
         return result(ControlStatus::InvalidState, "prepare",
                       "Prepare requires initialized, unprepared context");
     auto r = call([&] { return backend_->prepare(); });
@@ -249,8 +275,10 @@ isp::IspControlResult AiqController::prepare() {
         if (rollback.ok()) {
             initialized_ = false;
             release_ownership_lock();
-        } else
+        } else {
+            faulted_ = true;
             r.message += "; rollback deinitialize failed: " + rollback.message;
+        }
         return decorate(std::move(r));
     }
     prepared_ = true;
@@ -259,10 +287,11 @@ isp::IspControlResult AiqController::prepare() {
 isp::IspControlResult AiqController::start(bool defer_failure_cleanup) {
     using namespace isp;
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!initialized_ || !prepared_ || running_)
+    if (!initialized_ || !prepared_ || running_ || faulted_)
         return result(ControlStatus::InvalidState, "start", "Start requires a prepared, stopped context");
     auto r = call([&] { return backend_->start(); });
     if (!r.ok()) {
+        faulted_ = true;
         // A failed start may have acquired hardware resources. Never deinit until stop succeeded.
         if (defer_failure_cleanup) {
             running_ = true;
@@ -277,7 +306,7 @@ isp::IspControlResult AiqController::start(bool defer_failure_cleanup) {
         }
         auto rollback = call([&] { return backend_->deinitialize(); });
         if (rollback.ok()) {
-            initialized_ = prepared_ = false;
+            initialized_ = prepared_ = faulted_ = false;
             release_ownership_lock();
         } else
             r.message += "; rollback deinitialize failed: " + rollback.message;
@@ -294,6 +323,8 @@ isp::IspControlResult AiqController::stop() {
     auto r = call([&] { return backend_->stop(); });
     if (r.ok())
         running_ = false;
+    else
+        faulted_ = true;
     return decorate(std::move(r));
 }
 isp::IspControlResult AiqController::deinitialize() {
@@ -305,8 +336,10 @@ isp::IspControlResult AiqController::deinitialize() {
         return result(ControlStatus::InvalidState, "deinitialize", "Context is not initialized");
     auto r = call([&] { return backend_->deinitialize(); });
     if (r.ok()) {
-        initialized_ = prepared_ = false;
+        initialized_ = prepared_ = faulted_ = false;
         release_ownership_lock();
+    } else {
+        faulted_ = true;
     }
     return decorate(std::move(r));
 }
@@ -316,16 +349,21 @@ isp::IspControlResult AiqController::shutdown_locked() {
         return result(ControlStatus::Ok, "shutdown", "External service lifecycle untouched");
     if (running_) {
         auto r = call([&] { return backend_->stop(); });
-        if (!r.ok())
+        if (!r.ok()) {
+            faulted_ = true;
             return decorate(std::move(r));
+        }
         running_ = false;
     }
     if (initialized_) {
         auto r = call([&] { return backend_->deinitialize(); });
-        if (!r.ok())
+        if (!r.ok()) {
+            faulted_ = true;
             return decorate(std::move(r));
+        }
         initialized_ = prepared_ = false;
     }
+    faulted_ = false;
     release_ownership_lock();
     return result(ControlStatus::Ok, "shutdown", "Owned context stopped and released");
 }
@@ -355,6 +393,33 @@ isp::IspControlResult AiqController::query(isp::IspStatus *status) const {
     }
     if (!status)
         return result(ControlStatus::InvalidArgument, "query_status", "null status");
+    if (faulted_) {
+        *status = {};
+        status->camera_id = camera_config_.camera_id;
+        status->ownership = camera_config_.ownership;
+        status->backend = backend_info();
+        status->state = IspRuntimeState::Error;
+        status->message =
+            "Context lifecycle is uncertain after a failed operation; explicit shutdown is required";
+        return result(ControlStatus::InvalidState, "query_status", status->message);
+    }
+    const auto observed_info = backend_info();
+    const auto observed_owner = camera_config_.ownership == IspAiqOwnershipMode::InProcess &&
+                                        observed_info.real_hardware_backend &&
+                                        observed_info.evidence == EvidenceSource::LiveDevice
+                                    ? discover_aiq_ownership()
+                                    : ownership_;
+    if (camera_config_.ownership == IspAiqOwnershipMode::InProcess &&
+        (!observed_owner.scan_complete || !observed_owner.owners.empty())) {
+        *status = {};
+        status->camera_id = camera_config_.camera_id;
+        status->ownership = camera_config_.ownership;
+        status->backend = observed_info;
+        status->owner = observed_owner;
+        status->state = IspRuntimeState::OwnershipConflict;
+        status->message = "External owner candidates appeared or owner absence cannot be confirmed";
+        return result(ControlStatus::OwnershipConflict, "query_status", status->message);
+    }
     IspStatus report;
     auto r = call([&] { return backend_->query_status(&report); });
     if (r.ok() && report.camera_id != camera_config_.camera_id &&
@@ -362,11 +427,21 @@ isp::IspControlResult AiqController::query(isp::IspStatus *status) const {
         r.status = ControlStatus::ConfigMismatch;
         r.message = "Backend status belongs to a different logical Camera";
     }
+    if (r.ok() && !camera_config_.sensor_entity.empty() && !report.sensor.entity.empty() &&
+        report.sensor.entity != camera_config_.sensor_entity) {
+        r.status = ControlStatus::ConfigMismatch;
+        r.message = "Backend status belongs to a different Sensor entity";
+    }
+    if (r.ok() && report.ownership != IspAiqOwnershipMode::Unavailable &&
+        report.ownership != camera_config_.ownership) {
+        r.status = ControlStatus::OwnershipConflict;
+        r.message = "Backend reported a different ownership mode";
+    }
     report.camera_id = camera_config_.camera_id;
     report.ownership = camera_config_.ownership;
     report.backend = backend_info();
     if (camera_config_.ownership != IspAiqOwnershipMode::ExternalService)
-        report.owner = ownership_;
+        report.owner = observed_owner;
     if (report.sensor.entity.empty()) {
         report.sensor.entity = camera_config_.sensor_entity;
         report.sensor.confirmed = false;
@@ -374,16 +449,53 @@ isp::IspControlResult AiqController::query(isp::IspStatus *status) const {
     }
     if (report.iq.resolved_path.empty() && !iq_.resolved_path.empty())
         report.iq = iq_;
-    (void)call([&] { return backend_->query_capabilities(&report.capabilities); });
-    if (running_)
-        (void)call([&] { return backend_->read_controls(&report.controls); });
+    report.capabilities = {};
+    report.controls = {};
+    if (r.ok()) {
+        IspControlCapabilities capabilities;
+        auto queried = call([&] { return backend_->query_capabilities(&capabilities); });
+        if (!queried.ok()) {
+            r = std::move(queried);
+            r.message = "Capability query failed: " + r.message;
+        } else {
+            report.capabilities = capabilities;
+            if (running_ && capabilities.readback) {
+                auto read = read_controls_locked(&report.controls, capabilities);
+                if (!read.ok()) {
+                    r = std::move(read);
+                    r.message = "Control snapshot failed: " + r.message;
+                }
+            }
+        }
+    }
     if (report.backend.name == "backend-info-error") {
         r.status = ControlStatus::BackendError;
         r.message = "Backend info query threw";
     }
+    if (r.ok() && report.state == IspRuntimeState::Error) {
+        r.status = ControlStatus::BackendError;
+        r.message = report.message.empty() ? "Backend reported an ISP error" : report.message;
+    } else if (r.ok() && report.state == IspRuntimeState::OwnershipConflict) {
+        r.status = ControlStatus::OwnershipConflict;
+        r.message = report.message.empty() ? "Backend reported an ownership conflict" : report.message;
+    } else if (r.ok() && report.state == IspRuntimeState::ConfigMismatch) {
+        r.status = ControlStatus::ConfigMismatch;
+        r.message = report.message.empty() ? "Backend reported a configuration mismatch" : report.message;
+    }
     if (!r.ok()) {
-        report.state = r.status == ControlStatus::ConfigMismatch ? IspRuntimeState::ConfigMismatch
-                                                                 : IspRuntimeState::Unavailable;
+        report.state = r.status == ControlStatus::ConfigMismatch      ? IspRuntimeState::ConfigMismatch
+                       : r.status == ControlStatus::OwnershipConflict ? IspRuntimeState::OwnershipConflict
+                       : r.status == ControlStatus::BackendError      ? IspRuntimeState::Error
+                                                                      : IspRuntimeState::Unavailable;
+        report.hardware_confirmed = false;
+        report.controls = {};
+        report.sensor.confirmed = false;
+        if (report.iq.loaded == Confirmation::Confirmed)
+            report.iq.loaded = Confirmation::NotMeasured;
+        if (report.iq.sensor_match == Confirmation::Confirmed)
+            report.iq.sensor_match = Confirmation::NotMeasured;
+        if (report.iq.sdk_compatible == Confirmation::Confirmed)
+            report.iq.sdk_compatible = Confirmation::NotMeasured;
         report.message = r.message;
     }
     if (camera_config_.ownership == IspAiqOwnershipMode::InProcess && r.ok()) {
@@ -406,10 +518,16 @@ isp::IspControlResult AiqController::query(isp::IspStatus *status) const {
         report.iq.loaded = Confirmation::Mismatch;
         report.hardware_confirmed = false;
         report.message = "SDK-reported IQ file differs from the validated selected file";
+        r.status = ControlStatus::ConfigMismatch;
+        r.message = report.message;
     }
     if (camera_config_.ownership == IspAiqOwnershipMode::InProcess &&
-        (!ownership_.scan_complete || !ownership_.owners.empty()))
+        (!observed_owner.scan_complete || !observed_owner.owners.empty())) {
         report.state = IspRuntimeState::OwnershipConflict;
+        report.hardware_confirmed = false;
+        r.status = ControlStatus::OwnershipConflict;
+        r.message = "Owned context has unconfirmed or conflicting ownership";
+    }
     // Even a test backend reporting RUNNING can never establish real hardware readiness.
     const bool hardware =
         report.backend.real_hardware_backend && report.backend.evidence == EvidenceSource::LiveDevice;
@@ -428,22 +546,40 @@ isp::IspControlResult AiqController::query(isp::IspStatus *status) const {
     *status = std::move(report);
     return decorate(std::move(r));
 }
+isp::IspControlResult
+AiqController::read_controls_locked(isp::ControlSnapshot *controls,
+                                    const isp::IspControlCapabilities &capabilities) const {
+    using namespace isp;
+    *controls = {};
+    if (!capabilities.readback)
+        return result(ControlStatus::Unsupported, "read_controls",
+                      "Control readback capability is unavailable");
+    ControlSnapshot candidate;
+    auto read = call([&] { return backend_->read_controls(&candidate); });
+    if (!read.ok())
+        return decorate(std::move(read));
+    std::string validation_error;
+    if (!valid_controls(candidate, capabilities, &validation_error))
+        return result(ControlStatus::BackendError, "read_controls", validation_error);
+    const auto info = backend_info();
+    if (info.name == "backend-info-error")
+        return result(ControlStatus::BackendError, "read_controls", "Backend metadata query failed");
+    candidate.hardware_confirmed = candidate.hardware_confirmed && info.real_hardware_backend &&
+                                   info.evidence == EvidenceSource::LiveDevice;
+    *controls = std::move(candidate);
+    read.hardware_confirmed = controls->hardware_confirmed;
+    return decorate(std::move(read));
+}
 isp::IspControlResult AiqController::read_controls(isp::ControlSnapshot *controls) const {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!controls)
         return result(isp::ControlStatus::InvalidArgument, "read_controls", "null controls");
     *controls = {};
-    if (camera_config_.ownership != isp::IspAiqOwnershipMode::InProcess)
-        return result(isp::ControlStatus::Unsupported, "read_controls",
-                      "No documented external-service client API");
-    if (!running_)
-        return result(isp::ControlStatus::InvalidState, "read_controls",
-                      "Readback requires a running owned context");
-    auto r = call([&] { return backend_->read_controls(controls); });
-    const auto info = backend_info();
-    controls->hardware_confirmed = controls->hardware_confirmed && info.real_hardware_backend &&
-                                   info.evidence == isp::EvidenceSource::LiveDevice;
-    return decorate(std::move(r));
+    isp::IspControlCapabilities capabilities;
+    auto checked = check_control("read_controls", &capabilities);
+    if (!checked.ok())
+        return checked;
+    return read_controls_locked(controls, capabilities);
 }
 isp::IspControlResult AiqController::check_control(const char *op, isp::IspControlCapabilities *caps) const {
     using namespace isp;
@@ -454,8 +590,14 @@ isp::IspControlResult AiqController::check_control(const char *op, isp::IspContr
     if (!snapshot_info.sdk_available && snapshot_info.evidence != EvidenceSource::TestBackend)
         return result(ControlStatus::BackendUnavailable, op,
                       "BLOCKED_HARDWARE: no real RKAIQ SDK control backend");
-    if (!running_)
-        return result(ControlStatus::InvalidState, op, "Control requires a running owned context");
+    if (!running_ || faulted_)
+        return result(ControlStatus::InvalidState, op, "Control requires a healthy running owned context");
+    if (snapshot_info.real_hardware_backend && snapshot_info.evidence == EvidenceSource::LiveDevice) {
+        const auto owner = discover_aiq_ownership();
+        if (!owner.scan_complete || !owner.owners.empty())
+            return result(ControlStatus::OwnershipConflict, op,
+                          "External owner candidates appeared or current ownership cannot be confirmed");
+    }
     auto r = call([&] { return backend_->query_capabilities(caps); });
     return decorate(std::move(r));
 }
@@ -477,7 +619,7 @@ isp::IspControlResult AiqController::set_ae_mode(isp::AeMode mode) const {
     r.hardware_confirmed = false;
     ControlSnapshot actual;
     if (caps.readback) {
-        auto read = call([&] { return backend_->read_controls(&actual); });
+        auto read = read_controls_locked(&actual, caps);
         if (!read.ok()) {
             r.status = read.status;
             r.error_code = read.error_code;
@@ -518,7 +660,7 @@ isp::IspControlResult AiqController::set_exposure_time_us(double value) const {
     r.hardware_confirmed = false;
     ControlSnapshot actual;
     if (caps.readback) {
-        auto read = call([&] { return backend_->read_controls(&actual); });
+        auto read = read_controls_locked(&actual, caps);
         if (!read.ok()) {
             r.status = read.status;
             r.error_code = read.error_code;
@@ -555,7 +697,7 @@ isp::IspControlResult AiqController::set_analog_gain(double value) const {
     r.hardware_confirmed = false;
     ControlSnapshot actual;
     if (caps.readback) {
-        auto read = call([&] { return backend_->read_controls(&actual); });
+        auto read = read_controls_locked(&actual, caps);
         if (!read.ok()) {
             r.status = read.status;
             r.error_code = read.error_code;
@@ -589,7 +731,7 @@ isp::IspControlResult AiqController::set_awb_mode(isp::AwbMode mode) const {
     r.hardware_confirmed = false;
     ControlSnapshot actual;
     if (caps.readback) {
-        auto read = call([&] { return backend_->read_controls(&actual); });
+        auto read = read_controls_locked(&actual, caps);
         if (!read.ok()) {
             r.status = read.status;
             r.error_code = read.error_code;

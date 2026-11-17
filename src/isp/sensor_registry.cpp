@@ -49,6 +49,7 @@ IspCameraEvidence SensorRegistry::resolve(const AiqCameraConfig &config, const I
     result.live_evidence =
         graph.evidence == EvidenceSource::LiveDevice && output.evidence == EvidenceSource::LiveDevice;
     result.isp_generation = reported_isp_generation(graph);
+    result.configured_isp_entity = config.expected_isp_entity;
     result.sensor.identity.entity = config.sensor_entity;
     result.sensor.identity.evidence = graph.evidence;
     if (config.media_device.empty() || config.sensor_entity.empty() || config.expected_isp_entity.empty() ||
@@ -72,6 +73,10 @@ IspCameraEvidence SensorRegistry::resolve(const AiqCameraConfig &config, const I
             }
             capture = &e;
         }
+    if (capture) {
+        result.output_entity = capture->name;
+        result.output_role_hints = capture->role_hints;
+    }
     if (!sensor || !isp || !capture)
         result.errors.push_back("configured sensor/ISP/output entity is absent from topology");
     else if (sensor == isp || isp == capture || sensor == capture)

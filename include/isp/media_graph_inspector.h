@@ -7,6 +7,12 @@
 
 namespace isp {
 enum class MediaPadDirection { Unknown, Sink, Source };
+enum class MediaEntityRole { Unknown, Sensor, MipiCsi, Cif, Isp, Mainpath, Selfpath, VideoNode };
+struct MediaRoleHint {
+    MediaEntityRole role = MediaEntityRole::Unknown;
+    // Reported functions and name hints are different evidence. Name hints never grant readiness.
+    std::string source;
+};
 struct MediaPadInfo {
     uint32_t index = 0;
     MediaPadDirection direction = MediaPadDirection::Unknown;
@@ -19,6 +25,7 @@ struct MediaEntityInfo {
     std::string function;
     std::string device_node;
     std::vector<MediaPadInfo> pads;
+    std::vector<MediaRoleHint> role_hints;
 };
 struct MediaLinkInfo {
     std::string source_entity, sink_entity;
@@ -47,6 +54,11 @@ struct IspOutputNode {
     EvidenceSource evidence = EvidenceSource::NotMeasured;
     std::string source;
 };
+
+const char *to_string(MediaEntityRole role);
+const char *to_string(MediaPadDirection direction);
+// Classification is diagnostic only; configured entities and enabled links remain authoritative.
+std::vector<MediaRoleHint> classify_media_entity(const MediaEntityInfo &entity);
 
 // Parsers consume unchanged media-ctl/v4l2-ctl diagnostics. They never establish live provenance themselves.
 bool parse_media_graph(const std::string &text, const std::string &media_device, IspDeviceInfo *output,

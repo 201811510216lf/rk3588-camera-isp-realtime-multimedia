@@ -2,6 +2,7 @@
 #include "isp/rkisp_capability.h"
 #include "isp/sensor_registry.h"
 
+#include <algorithm>
 #include <cassert>
 #include <chrono>
 #include <cstdlib>
@@ -30,6 +31,10 @@ void all_replace(std::string *text, const std::string &from, const std::string &
         text->replace(at, from.size(), to);
         at += to.size();
     }
+}
+bool has_role(const isp::MediaEntityInfo &entity, isp::MediaEntityRole role, const char *source) {
+    return std::any_of(entity.role_hints.begin(), entity.role_hints.end(),
+                       [&](const auto &hint) { return hint.role == role && hint.source == source; });
 }
 } // namespace
 int main() {
@@ -63,6 +68,36 @@ int main() {
     assert(multi.active_format == "NV12M" && multi.multiplanar && multi.plane_count == 2);
     assert(isp::validate_isp_output(config.cameras[0], single).ok());
     assert(isp::validate_isp_output(config.cameras[1], multi).ok());
+    isp::IspDeviceInfo roles_graph;
+    assert(isp::parse_media_graph(read(fixtures / "media_graph_roles.txt"), "/dev/media55", &roles_graph,
+                                  &error));
+    assert(roles_graph.entities.size() == 6 && roles_graph.links.size() == 5);
+    assert(has_role(roles_graph.entities[0], isp::MediaEntityRole::Sensor, "REPORTED_FUNCTION"));
+    assert(has_role(roles_graph.entities[1], isp::MediaEntityRole::MipiCsi, "ENTITY_NAME_HINT"));
+    assert(has_role(roles_graph.entities[2], isp::MediaEntityRole::Cif, "ENTITY_NAME_HINT"));
+    assert(has_role(roles_graph.entities[3], isp::MediaEntityRole::Isp, "ENTITY_NAME_HINT"));
+    assert(has_role(roles_graph.entities[4], isp::MediaEntityRole::Mainpath, "ENTITY_NAME_HINT"));
+    assert(has_role(roles_graph.entities[5], isp::MediaEntityRole::Selfpath, "ENTITY_NAME_HINT"));
+    assert(has_role(roles_graph.entities[4], isp::MediaEntityRole::VideoNode, "REPORTED_NODE_TYPE"));
+    isp::MediaEntityInfo unknown;
+    unknown.name = "sensor-mainpathology";
+    assert(isp::classify_media_entity(unknown).empty()); // No substring/prefix Sensor or mainpath claim.
+    auto selected = config.cameras[0];
+    selected.media_device = "/dev/media55";
+    selected.sensor_entity = "fixture sensor C";
+    selected.expected_isp_entity = "fixture-isp";
+    selected.video_node = "/dev/video73";
+    isp::IspOutputNode selected_output;
+    assert(isp::parse_capture_info(single_text, selected.video_node, &selected_output, &error));
+    const auto mainpath = isp::SensorRegistry{}.resolve(selected, roles_graph, selected_output);
+    assert(mainpath.valid() && mainpath.enabled_path.size() == 5 &&
+           mainpath.output_entity == "fixture-mainpath");
+    assert(!mainpath.live_evidence && mainpath.isp_generation == "UNKNOWN");
+    selected.video_node = "/dev/video74";
+    selected_output.video_node = selected.video_node;
+    const auto selfpath = isp::SensorRegistry{}.resolve(selected, roles_graph, selected_output);
+    assert(!selfpath.mapping_valid &&
+           selfpath.output_entity == "fixture-selfpath"); // Disabled output stays invalid.
     isp::ReadOnlyMediaGraphInspector inspector;
     auto evidence = isp::inspect_isp_camera(config.cameras[0], inspector);
     assert(evidence.valid() && !evidence.live_evidence && evidence.enabled_path.size() == 3);
@@ -106,6 +141,19 @@ int main() {
     assert(!isp::parse_capture_info("[0]: 'NV12'\n Size: Discrete 640x480", "/dev/video42", &single, &error));
     assert(!isp::parse_capture_info(replace(multi_text, "Plane 1 :", "Plane 99 :"), "/dev/video47", &multi,
                                     &error));
+    const std::string unrelated_output =
+        "\nStream Parameters Video Output:\n    Frames per second: 25.000 (25/1)\n"
+        "ioctl: VIDIOC_ENUM_FMT\n    Type: Video Output\n    [0]: 'BGR3'\n";
+    assert(isp::parse_capture_info(single_text + unrelated_output, "/dev/video42", &single, &error));
+    assert(single.fps_numerator == 30 && single.advertised_formats == std::vector<std::string>{"NV12"});
+    assert(isp::parse_capture_info(
+        replace(single_text, "Frames per second: 30.000 (30/1)", "Frame interval unavailable") +
+            "\nStream Parameters Video Output:\n    Frames per second: 30.000 (30/1)\n",
+        "/dev/video42", &single, &error));
+    assert(!single.fps_denominator && !isp::validate_isp_output(config.cameras[0], single).ok());
+    assert(!isp::parse_capture_info(
+        single_text + "\nStream Parameters Video Capture:\n    Frames per second: 30.000 (30/1)\n",
+        "/dev/video42", &single, &error));
     auto invalid = config;
     invalid.cameras[1].camera_id = 0;
     assert(!isp::validate_config(invalid).ok());

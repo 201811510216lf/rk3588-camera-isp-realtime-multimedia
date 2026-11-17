@@ -23,7 +23,7 @@ RkAiqManager::~RkAiqManager() {
 }
 IspControlResult RkAiqManager::add_camera(AiqCameraConfig config, std::unique_ptr<IRkAiqBackend> backend,
                                           OwnershipEvidence ownership) {
-    if (initialized_)
+    if (initialized_ || stopping_)
         return manager_result(ControlStatus::InvalidState, "add_camera",
                               "Cannot change camera registry after initialization", config.camera_id);
     if (config.camera_id > 1 || cameras_.count(config.camera_id) || cameras_.size() >= 2)
@@ -55,7 +55,7 @@ IspControlResult RkAiqManager::add_camera(AiqCameraConfig config, std::unique_pt
                           "Explicit logical-camera/sensor mapping registered", id);
 }
 IspControlResult RkAiqManager::initialize_all() {
-    if (initialized_)
+    if (initialized_ || stopping_)
         return manager_result(ControlStatus::InvalidState, "initialize_all",
                               "Manager is already initialized");
     if (cameras_.empty())
@@ -80,9 +80,15 @@ IspControlResult RkAiqManager::initialize_all() {
         "Owned contexts prepared; external services untouched; readiness still requires query evidence");
 }
 IspControlResult RkAiqManager::start_phase(AiqStartOrder phase, bool stream_active) {
-    if (!initialized_ || phase == AiqStartOrder::Unspecified)
+    if (phase != AiqStartOrder::BeforeStream && phase != AiqStartOrder::AfterStream)
+        return manager_result(ControlStatus::InvalidArgument, "start_phase", "Invalid BSP start phase");
+    if (!initialized_ || stopping_)
         return manager_result(ControlStatus::InvalidState, "start_phase",
-                              "Manager must be initialized and BSP start phase explicit");
+                              "Manager must be initialized and not shutting down");
+    if ((phase == AiqStartOrder::BeforeStream && before_started_) ||
+        (phase == AiqStartOrder::AfterStream && after_started_))
+        return manager_result(ControlStatus::InvalidState, "start_phase",
+                              "Start phase already completed; contexts were left untouched");
     for (auto &entry : cameras_) {
         if (entry.second.config.ownership != IspAiqOwnershipMode::InProcess ||
             entry.second.config.start_order != phase)
@@ -97,6 +103,10 @@ IspControlResult RkAiqManager::start_phase(AiqStartOrder phase, bool stream_acti
             return r;
         }
     }
+    if (phase == AiqStartOrder::BeforeStream)
+        before_started_ = true;
+    else
+        after_started_ = true;
     return manager_result(
         ControlStatus::Ok, "start_phase",
         "Selected BSP-declared start phase completed; hardware evidence is queried separately");
@@ -108,6 +118,7 @@ IspControlResult RkAiqManager::start_all() {
     return start_phase(AiqStartOrder::AfterStream);
 }
 IspControlResult RkAiqManager::shutdown_all() {
+    stopping_ = true;
     auto first = manager_result(ControlStatus::Ok, "shutdown_all",
                                 "Owned contexts stopped in reverse order; external service untouched");
     for (auto entry = cameras_.rbegin(); entry != cameras_.rend(); ++entry) {
@@ -115,14 +126,18 @@ IspControlResult RkAiqManager::shutdown_all() {
         if (!r.ok() && first.ok())
             first = std::move(r);
     }
-    if (first.ok())
-        initialized_ = false;
+    if (first.ok()) {
+        initialized_ = stopping_ = false;
+        before_started_ = after_started_ = false;
+    }
     return first;
 }
 IspControlResult RkAiqManager::shutdown_phase(AiqStopOrder phase) {
-    if (phase == AiqStopOrder::Unspecified)
-        return manager_result(ControlStatus::InvalidArgument, "shutdown_phase",
-                              "BSP shutdown phase must be explicit");
+    if (phase != AiqStopOrder::BeforeStreamOff && phase != AiqStopOrder::AfterStreamOff)
+        return manager_result(ControlStatus::InvalidArgument, "shutdown_phase", "Invalid BSP shutdown phase");
+    // Once either BSP stop phase begins, no never-started phase may activate a prepared context.
+    // This latch survives partial/failed cleanup and resets only after successful shutdown_all().
+    stopping_ = true;
     auto first = manager_result(ControlStatus::Ok, "shutdown_phase",
                                 "Selected BSP shutdown phase completed; external services untouched");
     for (auto entry = cameras_.rbegin(); entry != cameras_.rend(); ++entry) {
@@ -149,5 +164,15 @@ std::vector<IspCameraId> RkAiqManager::camera_ids() const {
     for (const auto &entry : cameras_)
         out.push_back(entry.first);
     return out;
+}
+std::vector<CameraSnapshot> RkAiqManager::query_all() const {
+    std::vector<CameraSnapshot> snapshots;
+    snapshots.reserve(cameras_.size());
+    for (const auto &entry : cameras_) {
+        CameraSnapshot snapshot;
+        snapshot.result = entry.second.controller->query(&snapshot.status);
+        snapshots.push_back(std::move(snapshot));
+    }
+    return snapshots;
 }
 } // namespace isp

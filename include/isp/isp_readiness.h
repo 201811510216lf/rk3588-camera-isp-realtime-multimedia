@@ -22,6 +22,10 @@ IspControlResult validate_capture_binding(const IspConfig &, const CaptureBindin
 // Policy evaluation never converts configuration, ownership or known IQ mismatches into readiness.
 IspReadiness evaluate_readiness(const AiqCameraConfig &, const IspCameraEvidence &, const IspStatus &,
                                 bool allow_unverified);
+// Periodic checks reuse the startup confirmation rules; diagnostic capture never promotes readiness.
+IspReadiness evaluate_runtime_status(IspCameraId expected_id, const IspStatus &, bool allow_unverified);
+IspControlResult invoke_readiness_operation(const char *operation,
+                                            const std::function<IspControlResult()> &callback);
 
 class IspReadinessProvider {
   public:
@@ -33,6 +37,7 @@ class IspReadinessProvider {
     virtual IspControlResult shutdown() = 0;
     virtual IspStatus status(IspCameraId) const = 0;
 };
+IspStatus query_readiness_status(const IspReadinessProvider &, IspCameraId);
 
 // Coordinates discovery and the existing AiqController manager outside Capture workers.
 class IspPipelineCoordinator final : public IspReadinessProvider {
