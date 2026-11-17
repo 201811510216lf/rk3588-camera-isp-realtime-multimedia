@@ -107,6 +107,7 @@ void print_app_help(const char *program_name) {
               << "  --output PATH --events PATH --sync-diagnostics PATH --duration-sec N\n"
               << "  --device PATH --width N --height N  legacy aliases for camera0/input size\n"
               << "  --ai-enable[=BOOL] --ai-required BOOL --simulate-ai-ms N --v4l2-timeout-ms N\n"
+              << "  --isp-config PATH --strict-isp-ready[=BOOL] --allow-unverified-isp[=BOOL]\n"
               << "  --help\n";
 }
 
@@ -140,6 +141,7 @@ bool parse_app_options(int argc, char **argv, AppOptions *options, bool *show_he
             continue;
         }
         if (string_option("--camera1", &options->device1) || string_option("--output", &options->output) ||
+            string_option("--isp-config", &options->isp_config_path) ||
             string_option("--pixel-format", &options->pixel_format) ||
             string_option("--model-contract", &options->model_contract_path) ||
             string_option("--model", &options->model_path) ||
@@ -203,6 +205,16 @@ bool parse_app_options(int argc, char **argv, AppOptions *options, bool *show_he
         }
         if (bool_option(arg, "--ai-enable", &i, argc, argv, &options->ai_enable, error)) {
             options->ai_mode = options->ai_enable ? AppOptions::AiMode::Async : AppOptions::AiMode::Off;
+            continue;
+        }
+        if (bool_option(arg, "--allow-unverified-isp", &i, argc, argv, &options->allow_unverified_isp,
+                        error)) {
+            options->isp_policy_set = true;
+            options->strict_isp_ready = !options->allow_unverified_isp;
+            continue;
+        }
+        if (bool_option(arg, "--strict-isp-ready", &i, argc, argv, &options->strict_isp_ready, error)) {
+            options->isp_policy_set = true;
             continue;
         }
         if (bool_option(arg, "--ai-required", &i, argc, argv, &options->ai_required, error))
@@ -310,6 +322,11 @@ bool parse_app_options(int argc, char **argv, AppOptions *options, bool *show_he
     }
     if (options->output.size() >= 4 && options->output.substr(options->output.size() - 4) == ".mp4") {
         *error = "raw H.264 output path cannot use .mp4; use --output-dir for segmented MP4";
+        return false;
+    }
+    if ((!options->strict_isp_ready && !options->allow_unverified_isp) ||
+        (options->strict_isp_ready && options->allow_unverified_isp)) {
+        *error = "use strict ISP readiness or explicit --allow-unverified-isp diagnostic mode";
         return false;
     }
     if (options->device0.empty() || options->device1.empty() || options->device0 == options->device1) {

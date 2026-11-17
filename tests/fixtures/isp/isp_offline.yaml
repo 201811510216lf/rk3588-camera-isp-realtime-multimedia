@@ -1,0 +1,33 @@
+# Synthetic parser fixture only. These entity names are not claims about real hardware.
+version: 1
+strict_isp_ready: true
+allow_unverified_isp: false
+cameras:
+  - camera_id: 0
+    media_device: /dev/media19
+    sensor_entity: "fixture sensor A"
+    expected_isp_entity: "fixture ISP A"
+    video_node: /dev/video42
+    pixel_format: NV12
+    width: 640
+    height: 480
+    fps: 30
+    ownership: EXTERNAL_SERVICE
+    working_mode: NORMAL
+    start_order: unspecified
+    stop_order: unspecified
+    graph_file: media_graph.txt
+    capture_info_file: capture_nv12.txt
+  - camera_id: 1
+    media_device: /dev/media19
+    sensor_entity: "fixture sensor B"
+    expected_isp_entity: "fixture ISP B"
+    video_node: /dev/video47
+    pixel_format: NV12M
+    width: 640
+    height: 480
+    fps: 30
+    ownership: EXTERNAL_SERVICE
+    working_mode: NORMAL
+    graph_file: media_graph.txt
+    capture_info_file: capture_nv12m.txt

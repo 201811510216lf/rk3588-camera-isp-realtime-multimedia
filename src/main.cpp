@@ -61,6 +61,10 @@ int main(int argc, char **argv) {
     pipeline_config.rtmp_url = options.rtmp_url;
     pipeline_config.events_path = options.events_path;
     pipeline_config.sync_diagnostics_path = options.sync_diagnostics_path;
+    pipeline_config.isp_config_path = options.isp_config_path;
+    pipeline_config.strict_isp_ready = options.strict_isp_ready;
+    pipeline_config.allow_unverified_isp = options.allow_unverified_isp;
+    pipeline_config.isp_policy_set = options.isp_policy_set;
     pipeline_config.sync_mode = options.sync_mode;
     pipeline_config.sync_policy = options.sync_policy;
     pipeline_config.sync_tolerance_ms = options.sync_tolerance_ms;

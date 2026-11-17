@@ -4,12 +4,17 @@
 #include <string>
 
 struct MediaGraphValidationConfig {
+    std::string isp_config_file;
     std::string media_device;
     std::string camera0_node;
     std::string camera1_node;
     std::string graph_file;
     std::string camera0_info_file;
     std::string camera1_info_file;
+    std::string camera0_sensor;
+    std::string camera1_sensor;
+    std::string camera0_isp;
+    std::string camera1_isp;
     uint32_t expected_width = 0;
     uint32_t expected_height = 0;
     uint32_t expected_fps = 0;
@@ -21,6 +26,8 @@ struct MediaGraphValidationReport {
     bool camera1_available = false;
     bool independent_nodes = false;
     bool nv12_output = false;
+    bool sensor_mapping = false;
+    bool live_evidence = false;
     bool dimensions_match = true;
     bool fps_match = true;
     std::string graph_source;
@@ -29,8 +36,8 @@ struct MediaGraphValidationReport {
     std::string error;
 
     bool ok() const {
-        return graph_available && camera0_available && camera1_available &&
-               independent_nodes && nv12_output && dimensions_match && fps_match;
+        return graph_available && camera0_available && camera1_available && independent_nodes &&
+               nv12_output && sensor_mapping && dimensions_match && fps_match;
     }
     std::string summary() const;
 };
@@ -39,4 +46,3 @@ struct MediaGraphValidationReport {
 // supplied. Missing tools or malformed output are reported as failures; this
 // function never changes formats, links, controls, or stream state.
 MediaGraphValidationReport validate_media_graph(const MediaGraphValidationConfig &config);
-

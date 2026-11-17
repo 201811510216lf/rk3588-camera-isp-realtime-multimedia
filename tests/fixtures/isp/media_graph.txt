@@ -1,0 +1,44 @@
+Media controller API version 6.1.0
+Media device information
+------------------------
+driver          rkisp
+model           fixture-only-not-a-board
+bus info        platform:fixture
+driver version  6.1.0
+Device topology
+- entity 1: fixture sensor A (1 pad, 1 link)
+    type V4L2 subdev subtype Sensor flags 0
+    device node name /dev/v4l-subdev40
+    pad0: Source
+        [fmt:SRGGB10_1X10/640x480 field:none]
+        -> "fixture ISP A":0 [ENABLED]
+- entity 2: fixture ISP A (2 pads, 2 links)
+    type V4L2 subdev subtype Unknown flags 0
+    device node name /dev/v4l-subdev41
+    pad0: Sink
+        <- "fixture sensor A":0 [ENABLED]
+    pad1: Source
+        [fmt:YUYV8_2X8/640x480 field:none]
+        -> "fixture output A":0 [ENABLED]
+- entity 3: fixture output A (1 pad, 1 link)
+    type Node subtype V4L flags 0
+    device node name /dev/video42
+    pad0: Sink
+        <- "fixture ISP A":1 [ENABLED]
+- entity 4: fixture sensor B (1 pad, 1 link)
+    type V4L2 subdev subtype Sensor flags 0
+    device node name /dev/v4l-subdev43
+    pad0: Source
+        -> "fixture ISP B":0 [ENABLED]
+- entity 5: fixture ISP B (2 pads, 2 links)
+    type V4L2 subdev subtype Unknown flags 0
+    device node name /dev/v4l-subdev44
+    pad0: Sink
+        <- "fixture sensor B":0 [ENABLED]
+    pad1: Source
+        -> "fixture output B":0 [ENABLED]
+- entity 6: fixture output B (1 pad, 1 link)
+    type Node subtype V4L flags 0
+    device node name /dev/video47
+    pad0: Sink
+        <- "fixture ISP B":1 [ENABLED]

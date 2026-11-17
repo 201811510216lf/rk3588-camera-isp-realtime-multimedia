@@ -1,147 +1,110 @@
 #include "media_graph_validator.h"
 
-#include <algorithm>
-#include <array>
-#include <cstdio>
-#include <fstream>
+#include "isp/sensor_registry.h"
+
 #include <sstream>
-
-#ifdef _WIN32
-#include <windows.h>
-#define POPEN _popen
-#define PCLOSE _pclose
-#else
-#include <sys/wait.h>
-#define POPEN popen
-#define PCLOSE pclose
-#endif
-
-namespace {
-
-bool read_file(const std::string &path, std::string *output) {
-    if (path.empty() || !output) return false;
-    std::ifstream input(path, std::ios::binary);
-    if (!input) return false;
-    std::ostringstream contents;
-    contents << input.rdbuf();
-    *output = contents.str();
-    return true;
-}
-
-std::string quote_arg(const std::string &value) {
-    // The command names are fixed below. Device paths come from the user and
-    // must be shell quoted because popen is used for portability.
-    std::string quoted = "'";
-    for (char c : value) {
-        if (c == '\'') quoted += "'\\''";
-        else quoted.push_back(c);
-    }
-    quoted += "'";
-    return quoted;
-}
-
-bool run_read_only(const std::string &command, std::string *output) {
-    if (!output) return false;
-    output->clear();
-    FILE *pipe = POPEN(command.c_str(), "r");
-    if (!pipe) return false;
-    std::array<char, 512> buffer{};
-    while (std::fgets(buffer.data(), static_cast<int>(buffer.size()), pipe)) {
-        output->append(buffer.data());
-    }
-    const int status = PCLOSE(pipe);
-#ifdef _WIN32
-    return status == 0;
-#else
-    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
-#endif
-}
-
-bool has_nv12(const std::string &text) {
-    return text.find("NV12") != std::string::npos || text.find("nv12") != std::string::npos;
-}
-
-bool has_expected_size(const std::string &text, uint32_t width, uint32_t height) {
-    if (width == 0 || height == 0) return true;
-    std::ostringstream token;
-    token << width << "x" << height;
-    return text.find(token.str()) != std::string::npos;
-}
-
-bool has_expected_fps(const std::string &text, uint32_t fps) {
-    if (fps == 0) return true;
-    std::ostringstream token;
-    token << "(" << fps << "/1)";
-    if (text.find(token.str()) != std::string::npos) return true;
-    token.str("");
-    token << fps << "/1";
-    return text.find(token.str()) != std::string::npos;
-}
-
-std::string source_or_query(const std::string &path, const std::string &command, bool *ok) {
-    std::string result;
-    if (!path.empty()) {
-        *ok = read_file(path, &result);
-        return result;
-    }
-    *ok = run_read_only(command, &result);
-    return result;
-}
-
-} // namespace
+#include <utility>
 
 std::string MediaGraphValidationReport::summary() const {
     std::ostringstream out;
-    out << "graph=" << (graph_available ? "ok" : "missing")
-        << " camera0=" << (camera0_available ? "ok" : "missing")
-        << " camera1=" << (camera1_available ? "ok" : "missing")
+    out << "graph=" << (graph_available ? "parsed" : "missing")
+        << " camera0=" << (camera0_available ? "parsed" : "missing")
+        << " camera1=" << (camera1_available ? "parsed" : "missing")
         << " independent=" << (independent_nodes ? "yes" : "no")
-        << " nv12=" << (nv12_output ? "yes" : "no")
-        << " dimensions=" << (dimensions_match ? "ok" : "mismatch")
-        << " fps=" << (fps_match ? "ok" : "mismatch");
-    if (!error.empty()) out << " error=" << error;
+        << " active_nv12=" << (nv12_output ? "yes" : "no")
+        << " sensor_mapping=" << (sensor_mapping ? "enabled-path-verified" : "unverified")
+        << " dimensions=" << (dimensions_match ? "match" : "mismatch")
+        << " fps=" << (fps_match ? "match-or-unspecified" : "mismatch-or-unknown")
+        << " evidence=" << (live_evidence ? "LIVE_DEVICE" : "OFFLINE_OR_UNAVAILABLE")
+        << " isp_3a_ready=NOT_MEASURED";
+    if (!error.empty())
+        out << " error=" << error;
     return out.str();
 }
 
 MediaGraphValidationReport validate_media_graph(const MediaGraphValidationConfig &config) {
     MediaGraphValidationReport report;
-    if (config.camera0_node.empty() || config.camera1_node.empty()) {
-        report.error = "camera0 and camera1 V4L2 nodes are required";
-        return report;
+    isp::IspConfig loaded;
+    if (!config.isp_config_file.empty()) {
+        const auto rc = isp::load_isp_config(config.isp_config_file, &loaded);
+        if (!rc.ok()) {
+            report.error = rc.message;
+            return report;
+        }
+        if (loaded.cameras.size() != 2) {
+            report.error = "dual-camera validator requires two configured cameras";
+            return report;
+        }
+        if (loaded.cameras[0].camera_id == 1)
+            std::swap(loaded.cameras[0], loaded.cameras[1]);
+    } else {
+        if (config.media_device.empty() || config.camera0_node.empty() || config.camera1_node.empty()) {
+            report.error =
+                "explicit media device and both ISP output nodes are required; no /dev numbering is inferred";
+            return report;
+        }
+        loaded.cameras.resize(2);
+        for (uint32_t i = 0; i < 2; ++i) {
+            auto &c = loaded.cameras[i];
+            c.camera_id = i;
+            c.media_device = config.media_device;
+            c.video_node = i ? config.camera1_node : config.camera0_node;
+            c.sensor_entity = i ? config.camera1_sensor : config.camera0_sensor;
+            c.expected_isp_entity = i ? config.camera1_isp : config.camera0_isp;
+            c.graph_file = config.graph_file;
+            c.capture_info_file = i ? config.camera1_info_file : config.camera0_info_file;
+            c.width = config.expected_width;
+            c.height = config.expected_height;
+            c.fps = config.expected_fps;
+        }
     }
-    report.independent_nodes = config.camera0_node != config.camera1_node;
-
-    bool graph_ok = false;
-    const std::string graph_command = "media-ctl -p -d " + quote_arg(config.media_device.empty() ? "/dev/media0" : config.media_device);
-    const std::string graph = source_or_query(config.graph_file, graph_command, &graph_ok);
-    report.graph_source = config.graph_file.empty() ? graph_command : config.graph_file;
-    report.graph_available = graph_ok && !graph.empty();
-    if (!report.graph_available) {
-        report.error = config.graph_file.empty()
-                           ? "media-ctl query failed; provide --graph-file only with an unmodified board capture"
-                           : "cannot read graph file";
+    report.independent_nodes = loaded.cameras[0].video_node != loaded.cameras[1].video_node;
+    report.graph_available = true;
+    report.nv12_output = true;
+    report.sensor_mapping = true;
+    report.live_evidence = true;
+    isp::ReadOnlyMediaGraphInspector inspector;
+    for (size_t i = 0; i < loaded.cameras.size(); ++i) {
+        auto c = loaded.cameras[i];
+        isp::IspDeviceInfo graph;
+        isp::IspOutputNode output;
+        std::string error;
+        const bool graph_ok = inspector.inspect(c.media_device, c.graph_file, &graph, &error);
+        report.graph_available = report.graph_available && graph_ok;
+        if (!graph_ok && report.error.empty())
+            report.error = error;
+        const bool capture_ok = inspector.query_output(c.video_node, c.capture_info_file, &output, &error);
+        if (i == 0) {
+            report.camera0_available = capture_ok;
+            report.graph_source = graph.source;
+            report.camera0_source = output.source;
+        } else {
+            report.camera1_available = capture_ok;
+            report.camera1_source = output.source;
+        }
+        if (!capture_ok && report.error.empty())
+            report.error = error;
+        if (config.isp_config_file.empty()) {
+            if (!c.width)
+                c.width = output.width;
+            if (!c.height)
+                c.height = output.height;
+            c.pixel_format = output.active_format;
+        }
+        report.dimensions_match =
+            report.dimensions_match && c.width == output.width && c.height == output.height;
+        report.fps_match =
+            report.fps_match &&
+            (!c.fps || (output.fps_denominator &&
+                        static_cast<uint64_t>(c.fps) * output.fps_denominator == output.fps_numerator));
+        const auto evidence = isp::SensorRegistry{}.resolve(c, graph, output);
+        report.nv12_output = report.nv12_output && evidence.output_valid;
+        report.sensor_mapping = report.sensor_mapping && evidence.mapping_valid;
+        report.live_evidence = report.live_evidence && evidence.live_evidence;
+        if (!evidence.errors.empty() && report.error.empty())
+            report.error = evidence.errors.front();
     }
-
-    bool cam0_ok = false;
-    bool cam1_ok = false;
-    const std::string cam0_command = "v4l2-ctl -d " + quote_arg(config.camera0_node) + " --all --list-formats-ext";
-    const std::string cam1_command = "v4l2-ctl -d " + quote_arg(config.camera1_node) + " --all --list-formats-ext";
-    const std::string cam0 = source_or_query(config.camera0_info_file, cam0_command, &cam0_ok);
-    const std::string cam1 = source_or_query(config.camera1_info_file, cam1_command, &cam1_ok);
-    report.camera0_source = config.camera0_info_file.empty() ? cam0_command : config.camera0_info_file;
-    report.camera1_source = config.camera1_info_file.empty() ? cam1_command : config.camera1_info_file;
-    report.camera0_available = cam0_ok && !cam0.empty();
-    report.camera1_available = cam1_ok && !cam1.empty();
-    report.nv12_output = has_nv12(cam0) && has_nv12(cam1);
-    report.dimensions_match = has_expected_size(cam0, config.expected_width, config.expected_height) &&
-                              has_expected_size(cam1, config.expected_width, config.expected_height);
-    report.fps_match = has_expected_fps(cam0, config.expected_fps) &&
-                       has_expected_fps(cam1, config.expected_fps);
-    if (!report.camera0_available || !report.camera1_available) {
-        report.error = "v4l2-ctl query failed for one or both camera nodes";
-    }
-    if (!report.independent_nodes) report.error = "camera0 and camera1 resolve to the same node";
-    if (!report.nv12_output) report.error = "both nodes must advertise NV12 or NV12M";
+    if (!report.independent_nodes)
+        report.error = "camera0 and camera1 use the same output node";
     return report;
 }
-

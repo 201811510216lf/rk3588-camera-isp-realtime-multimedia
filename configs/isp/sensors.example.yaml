@@ -1,0 +1,5 @@
+# Sensor mappings use the SAME IspConfig schema as isp_config.example.yaml.
+# There is no second sensor registry file parser or inferred numeric mapping.
+# Copy isp_config.example.yaml, fill cameras[].sensor_entity/media_device/video_node,
+# then verify enabled paths with: media_graph_validator --config YOUR_CONFIG.yaml
+# This file is guidance only; it intentionally has no invented sensor records.

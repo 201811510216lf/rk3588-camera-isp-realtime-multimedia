@@ -4,6 +4,10 @@ set -u
 # Read-only RK3588 camera/ISP probe. It never writes DTS, IQ files, controls,
 # formats, or stream state. Run it on the target board and save its stdout.
 
+echo "probe_source=LIVE_SYSTEM_DISCOVERY"
+echo "hardware_parameter_confirmation=NOT_MEASURED"
+echo "ownership_hints=NOT_PER_CAMERA_OWNERSHIP_PROOF"
+
 run_optional() {
     local tool="$1"
     shift
@@ -64,6 +68,11 @@ fi
 echo "=== rkAIQ/runtime hints ==="
 if command -v pgrep >/dev/null 2>&1; then
     pgrep -a -f 'rkaiq|rkisp|camera' || echo "no matching rkAIQ process"
+fi
+if command -v systemctl >/dev/null 2>&1; then
+    echo "=== read-only service ownership hints ==="
+    systemctl list-units --type=service --all --no-legend --no-pager 2>/dev/null | \
+        grep -Ei 'rkaiq|rkisp|ispserver' || echo "no matching service or service query unavailable"
 fi
 for path in /usr/lib /usr/lib64 /oem/usr/lib /system/lib; do
     if [[ -d "$path" ]]; then

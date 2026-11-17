@@ -51,6 +51,10 @@ struct AppOptions {
     uint32_t segment_sec = 300;
     uint32_t stats_interval_sec = 5;
     std::string sync_diagnostics_path;
+    std::string isp_config_path;
+    bool strict_isp_ready = true;
+    bool allow_unverified_isp = false;
+    bool isp_policy_set = false;
     std::string output = "camera.h264";
     std::string events_path;
 };

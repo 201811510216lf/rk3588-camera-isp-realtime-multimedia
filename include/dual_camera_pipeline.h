@@ -7,6 +7,10 @@
 #include <memory>
 #include <string>
 
+namespace isp {
+class IspReadinessProvider;
+}
+
 struct DualCameraPipelineStats {
     uint64_t camera0_frames = 0;
     uint64_t camera1_frames = 0;
@@ -68,6 +72,11 @@ struct DualCameraPipelineConfig {
     uint64_t minimum_free_bytes = 1024ULL * 1024ULL * 1024ULL;
     std::string events_path;
     std::string sync_diagnostics_path;
+    std::string isp_config_path;
+    bool strict_isp_ready = true;
+    bool allow_unverified_isp = false;
+    bool isp_policy_set = false;
+    std::shared_ptr<isp::IspReadinessProvider> isp_readiness;
     bool no_stream = false;
     bool no_record = false;
     bool record = false;
@@ -86,6 +95,7 @@ class DualCameraPipeline {
     DualCameraPipelineStats stats() const;
 
   private:
+    void cleanup();
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

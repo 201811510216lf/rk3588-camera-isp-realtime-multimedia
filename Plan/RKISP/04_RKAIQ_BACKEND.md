@@ -1,0 +1,17 @@
+# 阶段4：可插拔RkAiq后端
+
+已读阶段2 HAL设计和阶段3图发现、Sensor映射、输出格式报告。继续使用原AiqController，增加可注入IRkAiqBackend、结构化能力/状态/回读与RkAiqManager。旧isp_control_cli/isp_debug_tool依赖的query_status与set_*接口保留兼容桥接，旧服务发现不再把任意rkaiq名字的文件当作已加载runtime/IQ。
+
+生产factory只有external service discovery和真实SDK adapter边界。EXTERNAL_SERVICE只读扫描/proc候选进程，定期query刷新，不调用init/start/stop/deinit；候选服务存在不能证明某Camera已ready、IQ已加载或可控制，没有合法IPC返回UNSUPPORTED。非Linux或进程扫描权限不足时owner absence不被确认。
+
+IN_PROCESS必须有显式逻辑ID、Sensor entity、ISP资源、尺寸/帧率、BSP start_order/stop_order；确认无外部owner、IQ文件可读/位于root内、SDK验证Sensor匹配和版本兼容，并按SDK能力核验HDR。真实Linux后端再取得每Sensor的合作式文件锁；该锁不能替代厂商守护进程的资源协议，启动前还会保守重新检查潜在外部owner。
+
+控制依次检查拥有的running状态、能力、有限数值和SDK报告范围，调用backend并回读。request_accepted与hardware_confirmed区分；回读失败保留已接受事实，回读不符返回READBACK_MISMATCH，不能把API接受写成硬件生效。AE/AWB/曝光/gain均支持结构化只读快照；缺值JSON为null。Fake只在test源内定义，不注册到产品工厂；即使Fake返回确认也无法升级真实READY/RUNNING、IQ加载或hardware_confirmed。
+
+IQ文件检查使用canonical路径，禁止越出iq_root、目录/空/不可读文件；文件名或根目录存在不证明Sensor身份、SDK兼容或实际加载。SDK/service不能查询时是NOT_MEASURED，绝不填OK。
+
+真实SDK/板端状态：SDK_BACKEND_MISSING / BLOCKED_HARDWARE。当前没有目标头文件、库、示例和IQ，未猜测或调用任何rk_aiq_*函数，未声称接通真实3A。编译和测试的真实结果由07_TEST_REPORT统一记录。
+
+最终顺序/所有权补充：AfterStream启动失败保留可能运行的context，交给Pipeline在显式stop_order阶段清理，不在STREAMOFF前擅自通用回滚。Linux合作式锁采用ISP资源shared/exclusive层加Sensor独占层；未确认独立context必须独占整个ISP，不能跨进程绕过manager的共享资源检查。真实服务仍须厂商所有权协议。
+
+主代理阶段检查：共享软件库与工具已在Windows clean build构建，25/25主机测试通过；SDK/硬件不在此结果内。最终安全修订复测见07_TEST_REPORT。

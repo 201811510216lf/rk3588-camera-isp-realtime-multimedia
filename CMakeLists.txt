@@ -21,6 +21,21 @@ option(REQUIRE_RK_DEMO "Fail configure when RK demo dependencies are missing" OF
 option(BUILD_SOFTWARE_DEMO "Build the dependency-light VirtualSensor + Software ISP demo" ON)
 option(ENABLE_ASAN_UBSAN "Enable AddressSanitizer and UndefinedBehaviorSanitizer for host targets" OFF)
 option(ENABLE_TSAN "Enable ThreadSanitizer for host targets" OFF)
+option(ENABLE_ASAN "Enable standalone AddressSanitizer (including MSVC)" OFF)
+
+if(ENABLE_ASAN)
+    if(ENABLE_TSAN OR ENABLE_ASAN_UBSAN)
+        message(FATAL_ERROR "Use a separate directory for standalone ASan")
+    endif()
+    if(MSVC)
+        string(REPLACE "/RTC1" "" CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}")
+        add_compile_options(/fsanitize=address)
+        add_link_options(/INCREMENTAL:NO)
+    else()
+        add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
+        add_link_options(-fsanitize=address)
+    endif()
+endif()
 
 if(ENABLE_TSAN AND ENABLE_ASAN_UBSAN)
     message(FATAL_ERROR "TSan and ASan/UBSan must use separate build directories")
@@ -81,9 +96,25 @@ if(ENABLE_RKNN)
         message(FATAL_ERROR "RKNN_BACKEND_UNAVAILABLE: provide actual RKNN runtime headers/library via RKNN_API_PATH")
     endif()
 endif()
-if(ENABLE_RKAIQ)
-    message(FATAL_ERROR "Application-side RKAIQ adapter is unavailable; use BSP aiq service and board IQ files")
-endif()
+add_library(isp_discovery STATIC
+    src/isp/isp_types.cpp
+    src/isp/isp_config.cpp
+    src/isp/media_graph_inspector.cpp
+    src/isp/sensor_registry.cpp
+    src/isp/rkisp_capability.cpp
+    src/media_graph_validator.cpp)
+target_include_directories(isp_discovery PUBLIC ${PROJECT_ROOT}/include)
+add_library(isp_control STATIC
+    src/aiq_controller.cpp
+    src/isp/rkaiq_controller.cpp
+    src/isp/backends/external_rkaiq_service_backend.cpp
+    src/isp/backends/rockchip_rkaiq_backend.cpp
+    src/isp/isp_readiness.cpp
+    src/isp/isp_health_monitor.cpp)
+target_include_directories(isp_control PUBLIC ${PROJECT_ROOT}/include)
+target_link_libraries(isp_control PUBLIC isp_discovery)
+include(cmake/RkAiqAdapter.cmake)
+configure_rkaiq_adapter(isp_control)
 if(ENABLE_V4L2)
     add_library(v4l2_capture STATIC src/v4l2_isp_camera.cpp)
     target_include_directories(v4l2_capture PUBLIC ${PROJECT_ROOT}/include)
@@ -122,6 +153,20 @@ if(BUILD_HOST_TESTS)
     else()
         add_compile_options(-UNDEBUG)
     endif()
+    add_executable(isp_discovery_test tests/isp_discovery_test.cpp)
+    target_link_libraries(isp_discovery_test PRIVATE isp_discovery)
+    target_compile_definitions(isp_discovery_test PRIVATE ISP_TEST_FIXTURE_DIR="${PROJECT_ROOT}/tests/fixtures/isp")
+    add_test(NAME isp_discovery_test COMMAND isp_discovery_test)
+    add_executable(rkaiq_lifecycle_test tests/rkaiq_lifecycle_test.cpp)
+    target_link_libraries(rkaiq_lifecycle_test PRIVATE isp_control)
+    add_test(NAME rkaiq_lifecycle_test COMMAND rkaiq_lifecycle_test)
+    add_executable(isp_health_monitor_test tests/isp_health_monitor_test.cpp)
+    target_link_libraries(isp_health_monitor_test PRIVATE isp_control)
+    add_test(NAME isp_health_monitor_test COMMAND isp_health_monitor_test)
+    add_executable(isp_readiness_test tests/isp_readiness_test.cpp)
+    target_link_libraries(isp_readiness_test PRIVATE isp_control)
+    target_compile_definitions(isp_readiness_test PRIVATE ISP_TEST_FIXTURE_DIR="${PROJECT_ROOT}/tests/fixtures/isp")
+    add_test(NAME isp_readiness_test COMMAND isp_readiness_test)
     add_executable(runtime_monitor_test tests/runtime_monitor_test.cpp)
     target_link_libraries(runtime_monitor_test PRIVATE runtime_core)
     add_test(NAME runtime_monitor_test COMMAND runtime_monitor_test)
@@ -165,9 +210,9 @@ if(BUILD_HOST_TESTS)
         src/frame_pairer.cpp)
     target_include_directories(frame_pairer_test PRIVATE ${PROJECT_ROOT}/include)
     add_test(NAME frame_pairer_test COMMAND frame_pairer_test)
-    add_executable(media_graph_validator_test
-        tests/media_graph_validator_test.cpp
-        src/media_graph_validator.cpp)
+    add_executable(media_graph_validator_test tests/media_graph_validator_test.cpp)
+    target_link_libraries(media_graph_validator_test PRIVATE isp_discovery)
+    target_compile_definitions(media_graph_validator_test PRIVATE ISP_TEST_FIXTURE_DIR="${PROJECT_ROOT}/tests/fixtures/isp")
     target_include_directories(media_graph_validator_test PRIVATE ${PROJECT_ROOT}/include)
     add_test(NAME media_graph_validator_test COMMAND media_graph_validator_test)
     add_executable(software_isp_test
@@ -197,24 +242,37 @@ if(BUILD_HOST_TESTS)
                  COMMAND ${Python3_EXECUTABLE} -m unittest discover -s ${PROJECT_ROOT}/tests -p "*isp_quality_analyzer*.py")
         add_test(NAME event_video_association_test
                  COMMAND ${Python3_EXECUTABLE} -m unittest discover -s ${PROJECT_ROOT}/tests -p "test_associate_events.py")
+        add_test(NAME isp_diagnostics_test
+                 COMMAND ${Python3_EXECUTABLE} -m unittest discover -s ${PROJECT_ROOT}/tests -p "test_isp_diagnostics.py")
+        add_test(NAME rkaiq_sdk_detection_test
+                 COMMAND ${Python3_EXECUTABLE} -m unittest discover -s ${PROJECT_ROOT}/tests -p "test_rkaiq_cmake.py")
+        set_tests_properties(rkaiq_sdk_detection_test PROPERTIES ENVIRONMENT "RKISP_TEST_CMAKE=${CMAKE_COMMAND}")
     endif()
 endif()
 
+if(BUILD_HOST_TESTS)
+    get_property(_host_tests DIRECTORY PROPERTY TESTS)
+    set_tests_properties(${_host_tests} PROPERTIES TIMEOUT 30)
+endif()
+
 if(BUILD_BSP_TOOLS)
-    add_executable(media_graph_validator
-        tools/media_graph_validator_main.cpp
-        src/media_graph_validator.cpp)
+    add_executable(media_graph_validator tools/media_graph_validator_main.cpp)
+    target_link_libraries(media_graph_validator PRIVATE isp_discovery)
     target_include_directories(media_graph_validator PRIVATE ${PROJECT_ROOT}/include)
 
-    add_executable(isp_control_cli
-        tools/isp_control_cli.cpp
-        src/aiq_controller.cpp)
+    add_executable(isp_control_cli tools/isp_control_cli.cpp)
+    target_link_libraries(isp_control_cli PRIVATE isp_control)
     target_include_directories(isp_control_cli PRIVATE ${PROJECT_ROOT}/include)
 
-    add_executable(isp_debug_tool
-        tools/isp_debug_tool.cpp
-        src/aiq_controller.cpp)
+    add_executable(isp_debug_tool tools/isp_debug_tool.cpp)
+    target_link_libraries(isp_debug_tool PRIVATE isp_control)
     target_include_directories(isp_debug_tool PRIVATE ${PROJECT_ROOT}/include)
+    if(BUILD_HOST_TESTS AND Python3_Interpreter_FOUND)
+        add_test(NAME isp_control_cli_test
+                 COMMAND ${Python3_EXECUTABLE} -m unittest discover -s ${PROJECT_ROOT}/tests -p "test_isp_cli.py")
+        set_tests_properties(isp_control_cli_test PROPERTIES TIMEOUT 30
+            ENVIRONMENT "ISP_CONTROL_CLI=$<TARGET_FILE:isp_control_cli>")
+    endif()
 endif()
 
 if(BUILD_RK_DEMO)
@@ -246,7 +304,7 @@ if(BUILD_RK_DEMO)
     target_include_directories(myDemo PRIVATE
         ${PROJECT_ROOT}/include ${RKNN_INCLUDE_DIR} ${MPP_INCLUDE_DIR} ${RGA_INCLUDE_DIR} ${OpenCV_INCLUDE_DIRS})
     target_link_libraries(myDemo PRIVATE
-        camera_core model_contract behavior_core output_core runtime_core
+        camera_core model_contract behavior_core output_core runtime_core isp_control
         ${OpenCV_LIBS} ${MPP_LIBRARY} ${RGA_LIBRARY} ${RKNN_LIBRARY})
 elseif(REQUIRE_RK_DEMO)
     message(FATAL_ERROR "REQUIRE_RK_DEMO needs BUILD_RK_DEMO=ON")

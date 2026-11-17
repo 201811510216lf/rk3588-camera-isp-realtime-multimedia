@@ -1,36 +1,42 @@
 #include "media_graph_validator.h"
-
 #include <cassert>
+#include <cstdlib>
 #include <filesystem>
-#include <fstream>
 
 int main() {
-    const auto root = std::filesystem::temp_directory_path() / "rk3588_media_graph_validator_test";
-    std::filesystem::create_directories(root);
-    const auto graph = root / "graph.txt";
-    const auto cam0 = root / "cam0.txt";
-    const auto cam1 = root / "cam1.txt";
-    {
-        std::ofstream(graph) << "- entity 1: sensor0\n  -> /dev/video10 [ENABLED]\n";
-        std::ofstream(cam0) << "Format Video Capture: NV12 1920x1080\n帧率 (30/1)\n";
-        std::ofstream(cam1) << "Format Video Capture: NV12M 1920x1080\n帧率 (30/1)\n";
-    }
+#ifdef _WIN32
+    _set_error_mode(_OUT_TO_STDERR);
+    _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+#endif
+    const auto fixtures = std::filesystem::u8path(ISP_TEST_FIXTURE_DIR);
     MediaGraphValidationConfig config;
-    config.camera0_node = "/dev/video10";
-    config.camera1_node = "/dev/video11";
-    config.graph_file = graph.string();
-    config.camera0_info_file = cam0.string();
-    config.camera1_info_file = cam1.string();
-    config.expected_width = 1920;
-    config.expected_height = 1080;
+    config.isp_config_file = (fixtures / "isp_offline.yaml").string();
+    const auto offline = validate_media_graph(config);
+    assert(offline.ok() && offline.sensor_mapping && !offline.live_evidence);
+    config = {};
+    config.media_device = "/dev/media19";
+    config.camera0_node = "/dev/video42";
+    config.camera1_node = "/dev/video47";
+    config.graph_file = (fixtures / "media_graph.txt").string();
+    config.camera0_info_file = (fixtures / "capture_nv12.txt").string();
+    config.camera1_info_file = (fixtures / "capture_nv12m.txt").string();
+    config.camera0_sensor = "fixture sensor A";
+    config.camera1_sensor = "fixture sensor B";
+    config.camera0_isp = "fixture ISP A";
+    config.camera1_isp = "fixture ISP B";
+    config.expected_width = 640;
+    config.expected_height = 480;
     config.expected_fps = 30;
-    const auto ok = validate_media_graph(config);
-    assert(ok.ok());
+    assert(validate_media_graph(config).ok());
     config.camera1_node = config.camera0_node;
-    const auto duplicate = validate_media_graph(config);
-    assert(!duplicate.ok());
-    std::error_code ignored;
-    std::filesystem::remove_all(root, ignored);
+    assert(!validate_media_graph(config).ok());
+    config.camera1_node = "/dev/video47";
+    config.camera0_sensor.clear();
+    assert(!validate_media_graph(config).ok());
+    config.camera0_sensor = "fixture sensor A";
+    config.expected_fps = 25;
+    assert(!validate_media_graph(config).ok());
+    config.media_device.clear();
+    assert(!validate_media_graph(config).ok());
     return 0;
 }
-

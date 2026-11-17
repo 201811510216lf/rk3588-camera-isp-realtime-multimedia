@@ -129,6 +129,19 @@ void test_cli_validation() {
     assert(!parse_app_options(7, const_cast<char **>(strict_args), &options, &help, &error));
     assert(error.find("strict is unavailable") != std::string::npos);
 
+    const char *isp_args[] = {"myDemo",       "--camera0",    "/dev/video10", "--camera1",
+                              "/dev/video11", "--isp-config", "board.yaml"};
+    assert(parse_app_options(7, const_cast<char **>(isp_args), &options, &help, &error));
+    assert(options.strict_isp_ready && !options.allow_unverified_isp &&
+           options.isp_config_path == "board.yaml");
+    const char *diagnostic_args[] = {"myDemo",    "--camera0",    "/dev/video10",
+                                     "--camera1", "/dev/video11", "--allow-unverified-isp"};
+    assert(parse_app_options(6, const_cast<char **>(diagnostic_args), &options, &help, &error));
+    assert(!options.strict_isp_ready && options.allow_unverified_isp && options.isp_policy_set);
+    const char *implicit_args[] = {"myDemo",    "--camera0",    "/dev/video10",
+                                   "--camera1", "/dev/video11", "--strict-isp-ready=false"};
+    assert(!parse_app_options(6, const_cast<char **>(implicit_args), &options, &help, &error));
+    assert(error.find("explicit") != std::string::npos);
     const char *help_args[] = {"myDemo", "--help"};
     assert(parse_app_options(2, const_cast<char **>(help_args), &options, &help, &error) && help);
     const char *missing_args[] = {"myDemo"};

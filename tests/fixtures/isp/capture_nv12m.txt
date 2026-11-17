@@ -1,0 +1,20 @@
+Driver Info:
+    Driver name : rkisp
+    Device Caps : 0x04201000
+        Video Capture Multiplanar
+        Streaming
+Format Video Capture Multiplanar:
+    Width/Height      : 640/480
+    Pixel Format      : 'NM12' (Y/CbCr 4:2:0)
+    Number of planes  : 2
+    Plane 0 :
+        Bytes per Line : 672
+        Size Image     : 322560
+    Plane 1 :
+        Bytes per Line : 672
+        Size Image     : 161280
+Stream Parameters Video Capture Multiplanar:
+    Frames per second: 30.000 (30/1)
+ioctl: VIDIOC_ENUM_FMT
+    Type: Video Capture Multiplanar
+    [0]: 'NM12' (Y/CbCr 4:2:0, non-contiguous)

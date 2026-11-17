@@ -7,12 +7,16 @@
 #include "composite_processor.h"
 #include "encoded_packet_fanout.h"
 #include "frame_pairer.h"
+#include "isp/isp_health_monitor.h"
+#include "isp/isp_readiness.h"
 #include "mpp_encoder.h"
 #include "output/packet_sink.h"
 #include "output/recording_index.h"
 #include "rknnPool.hpp"
 #include "runtime/monitor.h"
 #include "v4l2_isp_camera.h"
+#include <functional>
+#include <optional>
 
 #include "RgaUtils.h"
 #include "im2d.h"
@@ -327,6 +331,9 @@ struct DualCameraPipeline::Impl {
         std::make_unique<BoundedFrameQueue<FrameSample>>(4),
         std::make_unique<BoundedFrameQueue<FrameSample>>(4)};
     runtime::HealthMonitor health;
+    isp::IspHealthMonitor isp_health;
+    std::array<std::optional<isp::AiqCameraConfig>, 2> isp_camera_configs;
+    std::unique_ptr<runtime::RotatingLog> isp_health_log;
     std::unique_ptr<runtime::RotatingLog> health_log;
     std::atomic<bool> camera_done[2]{};
     bool independent() const { return config.video_mode == AppOptions::VideoMode::Independent; }
@@ -379,6 +386,16 @@ struct DualCameraPipeline::Impl {
         }
     }
 
+    void p_isp_observe(uint32_t id, const camera::CameraBufferDesc &frame) {
+        isp::IspFrameObservation observation;
+        observation.sequence = frame.sequence;
+        observation.source_timestamp_ns = frame.timestamp_ns;
+        observation.monotonic_timestamp_ns = frame.monotonic_timestamp_ns;
+        observation.source_clock_known = frame.clock_domain == camera::CameraClockDomain::Monotonic;
+        observation.evidence = isp::EvidenceSource::LiveDevice;
+        (void)isp_health.observe_capture(id, observation);
+    }
+
     void capture_loop(uint32_t id, std::chrono::steady_clock::time_point deadline) {
         uint64_t errors = 0;
         auto next_ai = std::chrono::steady_clock::now();
@@ -405,6 +422,7 @@ struct DualCameraPipeline::Impl {
                         ++counters.camera1_errors;
                 }
                 health.error("camera" + std::to_string(id));
+                (void)isp_health.record_error(id);
                 if (errors >= 5) {
                     if (!independent())
                         fail("camera" + std::to_string(id) + " repeated V4L2 dequeue failures: " + error);
@@ -427,6 +445,7 @@ struct DualCameraPipeline::Impl {
             sample.timestamp_ns = frame->desc.timestamp_ns;
             sample.clock_domain = static_cast<FrameClockDomain>(frame->desc.clock_domain);
             sample.frame = *frame;
+            p_isp_observe(id, frame->desc);
             health.heartbeat("camera" + std::to_string(id), steady_now_ns(),
                              independent() ? video_queue[id]->size() : pairer.pending(id));
             if (independent()) {
@@ -790,7 +809,8 @@ struct DualCameraPipeline::Impl {
 DualCameraPipeline::DualCameraPipeline(DualCameraPipelineConfig config)
     : impl_(std::make_unique<Impl>(std::move(config))) {}
 
-DualCameraPipeline::~DualCameraPipeline() {
+DualCameraPipeline::~DualCameraPipeline() { cleanup(); }
+void DualCameraPipeline::cleanup() {
     request_stop();
     if (!impl_)
         return;
@@ -819,9 +839,20 @@ DualCameraPipeline::~DualCameraPipeline() {
     }
     for (auto &output : impl_->video)
         output.close();
-    for (auto &cam : impl_->camera) {
+    if (impl_->config.isp_readiness) {
+        const auto stopped = impl_->config.isp_readiness->before_stream_stop();
+        if (!stopped.ok())
+            impl_->fail("ISP pre-STREAMOFF cleanup failed: " + isp::result_json(stopped));
+    }
+    for (uint32_t id = 0; id < 2; ++id) {
         std::string ignored;
-        (void)cam.stop(&ignored);
+        (void)impl_->camera[id].stop(&ignored);
+        (void)impl_->isp_health.capture_stopped(id);
+    }
+    if (impl_->config.isp_readiness) {
+        const auto stopped = impl_->config.isp_readiness->after_stream_stop();
+        if (!stopped.ok())
+            impl_->fail("ISP shutdown failed: " + isp::result_json(stopped));
     }
 }
 void DualCameraPipeline::request_stop() {
@@ -851,6 +882,11 @@ bool DualCameraPipeline::run(std::string *error) {
         return false;
     }
     p.run_started = true;
+    struct ScopeExit {
+        std::function<void()> finish;
+        ~ScopeExit() { finish(); }
+    };
+    ScopeExit cleanup_guard{[this] { cleanup(); }};
     if (p.config.camera0.empty() || p.config.camera1.empty() || p.config.camera0 == p.config.camera1) {
         if (error)
             *error = "two distinct verified RKISP output nodes are required";
@@ -866,6 +902,52 @@ bool DualCameraPipeline::run(std::string *error) {
             *error = "hardware sync requested but no verified Sensor FSIN/trigger BSP backend is installed";
         return false;
     }
+    if (!p.config.isp_readiness && !p.config.isp_config_path.empty()) {
+        isp::IspConfig isp_config;
+        auto loaded = isp::load_isp_config(p.config.isp_config_path, &isp_config);
+        if (!loaded.ok()) {
+            if (error)
+                *error = isp::result_json(loaded);
+            return false;
+        }
+        isp::CaptureBinding binding;
+        binding.nodes = {p.config.camera0, p.config.camera1};
+        binding.width = p.config.input_width;
+        binding.height = p.config.input_height;
+        binding.fps = p.config.fps;
+        binding.pixel_format = p.config.pixel_format;
+        const auto bound = isp::validate_capture_binding(isp_config, binding);
+        if (!bound.ok()) {
+            if (error)
+                *error = isp::result_json(bound);
+            return false;
+        }
+        for (const auto &camera : isp_config.cameras)
+            p.isp_camera_configs[camera.camera_id] = camera;
+        if (p.config.isp_policy_set) {
+            isp_config.strict_isp_ready = p.config.strict_isp_ready;
+            isp_config.allow_unverified_isp = p.config.allow_unverified_isp;
+        }
+        p.config.allow_unverified_isp = isp_config.allow_unverified_isp;
+        p.config.strict_isp_ready = isp_config.strict_isp_ready;
+        p.config.isp_readiness = std::make_shared<isp::IspPipelineCoordinator>(std::move(isp_config));
+    }
+    if (p.config.isp_readiness) {
+        const auto ready = p.config.isp_readiness->before_stream();
+        if (!ready.ok()) {
+            if (error)
+                *error = isp::result_json(ready);
+            return false;
+        }
+    } else if (p.config.strict_isp_ready || !p.config.allow_unverified_isp) {
+        if (error)
+            *error = "BACKEND_UNAVAILABLE: provide --isp-config or explicitly enable --allow-unverified-isp "
+                     "diagnostics";
+        return false;
+    }
+    if (p.config.allow_unverified_isp)
+        std::cerr
+            << "UNVERIFIED_ISP: diagnostic capture requested; Sensor/IQ/ISP readiness is not confirmed\n";
     FramePairerConfig pair_cfg;
     pair_cfg.tolerance_ns = static_cast<uint64_t>(p.config.sync_tolerance_ms) * 1'000'000ULL;
     pair_cfg.max_wait_ns = static_cast<uint64_t>(p.config.sync_max_wait_ms) * 1'000'000ULL;
@@ -885,7 +967,8 @@ bool DualCameraPipeline::run(std::string *error) {
         cfg.fps = p.config.fps;
         cfg.poll_timeout_ms = p.config.v4l2_timeout_ms;
         cfg.buffer_count = p.config.capture_buffer_count;
-        cfg.pixel_format = p.config.pixel_format;
+        cfg.pixel_format =
+            p.isp_camera_configs[i] ? p.isp_camera_configs[i]->pixel_format : p.config.pixel_format;
         std::string why;
         enabled[i] = p.camera[i].set_config(cfg, &why) && p.camera[i].open(&why) && p.camera[i].start(&why);
         if (!enabled[i]) {
@@ -895,14 +978,16 @@ bool DualCameraPipeline::run(std::string *error) {
                 ++p.counters.camera0_errors;
             else
                 ++p.counters.camera1_errors;
-            if (!p.independent()) {
+            if (!p.independent() || (p.isp_camera_configs[i] && p.isp_camera_configs[i]->ownership ==
+                                                                    isp::IspAiqOwnershipMode::InProcess)) {
                 if (error)
-                    *error = why;
+                    *error = "Camera STREAMON failed; owned ISP contexts must roll back: " + why;
                 return false;
             }
             std::cerr << "camera" << i << " unavailable: " << why << '\n';
             continue;
         }
+        (void)p.isp_health.capture_started(static_cast<uint32_t>(i), steady_now_ns());
         caps[i] = p.camera[i].capabilities();
         if (!caps[i].width || !caps[i].height) {
             if (error)
@@ -914,6 +999,26 @@ bool DualCameraPipeline::run(std::string *error) {
         if (error)
             *error = "both cameras are unavailable";
         return false;
+    }
+    for (uint32_t id = 0; id < 2; ++id) {
+        if (!enabled[id] || !p.isp_camera_configs[id])
+            continue;
+        const auto &expected = *p.isp_camera_configs[id];
+        if (caps[id].width != expected.width || caps[id].height != expected.height ||
+            (caps[id].fps && caps[id].fps != expected.fps) || caps[id].format_name != expected.pixel_format) {
+            (void)p.isp_health.record_error(id);
+            if (error)
+                *error = "CONFIG_MISMATCH: negotiated V4L2 output differs from prepared ISP camera mapping";
+            return false;
+        }
+    }
+    if (p.config.isp_readiness) {
+        const auto ready = p.config.isp_readiness->after_stream();
+        if (!ready.ok()) {
+            if (error)
+                *error = isp::result_json(ready);
+            return false;
+        }
     }
     if (enabled[0] && enabled[1] &&
         (caps[0].width != caps[1].width || caps[0].height != caps[1].height ||
@@ -947,6 +1052,8 @@ bool DualCameraPipeline::run(std::string *error) {
     }
     p.health_log = std::make_unique<runtime::RotatingLog>(
         std::filesystem::path(p.config.output_dir) / "health.jsonl", 4U * 1024U * 1024U, 3);
+    p.isp_health_log = std::make_unique<runtime::RotatingLog>(
+        std::filesystem::path(p.config.output_dir) / "isp-health.jsonl", 4U * 1024U * 1024U, 3);
     const int output_count = p.independent() ? 2 : 1;
     for (int i = 0; i < output_count; ++i) {
         if (p.independent() && !enabled[i])
@@ -1120,6 +1227,26 @@ bool DualCameraPipeline::run(std::string *error) {
     auto next_health = std::chrono::steady_clock::now();
     while (!(p.camera_done[0].load() && p.camera_done[1].load()) && !p.stopping()) {
         if (std::chrono::steady_clock::now() >= next_health) {
+            for (uint32_t id = 0; id < 2; ++id) {
+                isp::IspStatus status;
+                status.camera_id = id;
+                if (p.config.isp_readiness)
+                    status = p.config.isp_readiness->status(id);
+                else {
+                    status.state = isp::IspRuntimeState::Unavailable;
+                    status.message = "UNVERIFIED_ISP diagnostic capture";
+                }
+                if (status.state == isp::IspRuntimeState::Error ||
+                    status.state == isp::IspRuntimeState::OwnershipConflict ||
+                    status.state == isp::IspRuntimeState::ConfigMismatch)
+                    (void)p.isp_health.record_error(id);
+                (void)p.isp_health.observe_service(status, steady_now_ns());
+                if (!p.isp_health_log->append(isp::health_json(p.isp_health.snapshot(id, steady_now_ns()))))
+                    p.health.error("isp_health_log");
+                if (status.state == isp::IspRuntimeState::OwnershipConflict ||
+                    status.state == isp::IspRuntimeState::ConfigMismatch)
+                    p.fail("ISP ownership/configuration changed during capture");
+            }
             const auto metrics = runtime::sample_system(p.config.output_dir, p.config.minimum_free_bytes);
             std::ostringstream line;
             line << "{\"monotonic_ns\":" << steady_now_ns() << ",\"rss_bytes\":" << metrics.rss_bytes
@@ -1202,13 +1329,25 @@ bool DualCameraPipeline::run(std::string *error) {
     p.sync_diag.flush();
     p.sync_diag.close();
     bool stop_ok = true;
-    for (auto &cam : p.camera) {
+    if (p.config.isp_readiness) {
+        const auto stopped = p.config.isp_readiness->before_stream_stop();
+        if (!stopped.ok())
+            p.fail("ISP pre-STREAMOFF cleanup failed: " + isp::result_json(stopped));
+    }
+    for (uint32_t id = 0; id < 2; ++id) {
         std::string stop_error;
-        if (!cam.stop(&stop_error)) {
+        if (!p.camera[id].stop(&stop_error)) {
             stop_ok = false;
             if (error && error->empty())
                 *error = stop_error;
         }
+    }
+    for (uint32_t id = 0; id < 2; ++id)
+        (void)p.isp_health.capture_stopped(id);
+    if (p.config.isp_readiness) {
+        const auto stopped = p.config.isp_readiness->after_stream_stop();
+        if (!stopped.ok())
+            p.fail("ISP shutdown failed: " + isp::result_json(stopped));
     }
     const FramePairerStats ps = p.pairer.stats();
     {

@@ -1,0 +1,42 @@
+# Strict YAML scalar/list subset, not general YAML. Replace ALL discovery placeholders.
+# No actual Sensor, media device, ISP entity, IQ identity or SDK version is known.
+version: 1
+strict_isp_ready: true
+allow_unverified_isp: false
+cameras:
+  - camera_id: 0
+    media_device: /dev/MEDIA_FROM_DISCOVERY_A
+    sensor_entity: "SENSOR_ENTITY_FROM_MEDIA_GRAPH_A"
+    expected_sensor_name: ""
+    expected_isp_entity: "ISP_ENTITY_FROM_MEDIA_GRAPH_A"
+    video_node: /dev/ISP_OUTPUT_FROM_DISCOVERY_A
+    pixel_format: NV12
+    width: 1920
+    height: 1080
+    fps: 30
+    ownership: EXTERNAL_SERVICE
+    working_mode: NORMAL
+    iq_root: ""
+    iq_file: ""
+    isp_instance: "RESOURCE_ID_CONFIRMED_FROM_BSP_A"
+    independent_context_confirmed: false
+    start_order: unspecified
+    stop_order: unspecified
+  - camera_id: 1
+    media_device: /dev/MEDIA_FROM_DISCOVERY_B
+    sensor_entity: "SENSOR_ENTITY_FROM_MEDIA_GRAPH_B"
+    expected_sensor_name: ""
+    expected_isp_entity: "ISP_ENTITY_FROM_MEDIA_GRAPH_B"
+    video_node: /dev/ISP_OUTPUT_FROM_DISCOVERY_B
+    pixel_format: NV12
+    width: 1920
+    height: 1080
+    fps: 30
+    ownership: EXTERNAL_SERVICE
+    working_mode: NORMAL
+    iq_root: ""
+    iq_file: ""
+    isp_instance: "RESOURCE_ID_CONFIRMED_FROM_BSP_B"
+    independent_context_confirmed: false
+    start_order: unspecified
+    stop_order: unspecified

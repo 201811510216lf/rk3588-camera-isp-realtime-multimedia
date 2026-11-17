@@ -1,0 +1,15 @@
+Driver Info:
+    Driver name : rkisp
+    Device Caps : 0x04200001
+        Video Capture
+        Streaming
+Format Video Capture:
+    Width/Height      : 640/480
+    Pixel Format      : 'NV12' (Y/CbCr 4:2:0)
+    Bytes per Line    : 672
+    Size Image        : 483840
+Stream Parameters Video Capture:
+    Frames per second: 30.000 (30/1)
+ioctl: VIDIOC_ENUM_FMT
+    Type: Video Capture
+    [0]: 'NV12' (Y/CbCr 4:2:0)

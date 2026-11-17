@@ -4,17 +4,32 @@
 
 | 验证层 | 当前状态 |
 |---|---|
-| C++17 软件核心与自动测试 | Windows/MSVC与Linux/GCC（含ASan/UBSan），各18/18通过 |
+| C++17 软件核心与自动测试 | 本轮Windows/MSVC与MSVC AddressSanitizer各25/25通过 |
 | 模型/事件/录像索引软件 | 已实现，使用内存 fixture；行为模型未提供 |
 | Linux V4L2、RGA、MPP、RKNN 目标程序 | 源码接线完成，SDK 编译/板端验证待完成 |
 | 双真实 Camera、ISP/3A、模型精度、24/72h长稳 | BLOCKED_HARDWARE |
 | MPP EOS/显式PTS/拆分输入输出线程、VFR容器时间轴 | PARTIAL，见适配清单 |
 
+
+## RKISP30 / RkAiq 软件控制层
+
+已复用AiqController、V4L2IspCamera、media_graph_validator和isp_control_cli，增加显式Sensor/ISP/output映射、IQ/所有权验证、可插拔backend、双路生命周期/回滚、readback与ISP健康观测。图像仍是RKISP输出NV12/NV12M；RkAiq是控制路径，Software ISP仍独立。
+
+默认严格检查ISP readiness。配置示例为configs/isp/isp_config.example.yaml，必须用实际BSP证据替换占位符。外部服务发现、离线图、Fake或IQ目录不能当作READY；未验证诊断必须显式--allow-unverified-isp。IN_PROCESS须声明BSP start_order及stop_order，无SDK或所有权不明时不创建context。
+
+```bash
+./build-host/media_graph_validator --config /data/isp.yaml
+./build-host/isp_control_cli --isp-config /data/isp.yaml --camera-id 0 --isp-status --json
+./build-host/isp_control_cli --camera-id 0 --list-controls --json
+```
+
+当前external backend没有已核验IPC，控制命令非零退出；独立CLI不会接管Pipeline拥有的IN_PROCESS context。真实vendor API只允许从目标SDK头/示例实现，当前没有完成真实3A接通。详见[ISP交付报告](Plan/RKISP/FINAL_RKISP_DELIVERY_REPORT.md)、[本轮测试](Plan/RKISP/07_TEST_REPORT.md)和[板端验收](docs/RK3588_RKISP_BRINGUP.md)。本轮无硬件、模型精度或24小时板测结论。
+
 ## 主链路
 
 Sensor0/1 → MIPI/RKCIF/RKISP → 两路 V4L2 NV12/NV12M → 共享 Frame lease → 独立录像队列 / 软件配帧合成 → RGA/CPU标明的图像处理、精确帧OSD → MPP H.264 → 各自有界 raw/MP4/network sink。AI 使用独立有界队列，结果保留原 Camera/sequence/timestamp/model 信息。
 
-RkAiq 是外部 ISP 3A/IQ 控制，不是串行图像硬件节点。主产品只有两路真实 Camera，无文件、USB、RTSP 或 Mock 输入模式。`--video-mode independent` 两路录像互不等待配帧；`joint` 是配帧合成录像，不能视为两路原始完整录像。软件配帧不等于同时曝光。
+RkAiq 是 ISP 3A/IQ 控制，可由外部服务或经核验的应用内后端管理；它不作为串行图像硬件节点。主产品只有两路真实 Camera，无文件、USB、RTSP 或 Mock 输入模式。`--video-mode independent` 两路录像互不等待配帧；`joint` 是配帧合成录像，不能视为两路原始完整录像。软件配帧不等于同时曝光。
 
 ## 主机构建
 
@@ -29,7 +44,7 @@ Windows 已安装 Visual Studio C++ 与 Windows SDK 时：
 powershell -ExecutionPolicy Bypass -File scripts/build_host_windows.ps1
 ```
 
-CMake >=3.16，C++17、Threads::Threads、GCC/Clang警告开关和 compile_commands.json；Windows 脚本 clean-first 避免本机旧依赖记录残留。主机测试不编译厂商视频实现。Linux CI 已通过普通与ASan/UBSan构建及各400次压力测试；真实执行结果见 [测试记录](Plan/08_TEST_RESULTS.md)。
+CMake >=3.16，C++17、Threads::Threads、GCC/Clang警告开关和 compile_commands.json；Windows 脚本 clean-first 避免本机旧依赖记录残留。主机测试不编译厂商视频实现。本轮ISP专项完成Windows及MSVC ASan验证；既有Linux CI仅是上一提交的历史证据，未当作本轮结果。真实执行结果见 [测试记录](Plan/RKISP/07_TEST_REPORT.md)。
 
 ## BSP 构建和运行
 
@@ -42,13 +57,13 @@ cmake -S . -B build-rk -DBUILD_RK_DEMO=ON -DREQUIRE_RK_DEMO=ON \
   -DOpenCV_DIR=/opt/bsp/opencv/lib/cmake/opencv4
 cmake --build build-rk --parallel
 ./build-rk/myDemo --camera0 /dev/videoX --camera1 /dev/videoY \
-  --pixel-format auto --capture-buffers 6 --video-mode independent \
+  --isp-config /data/isp.yaml --pixel-format auto --capture-buffers 6 --video-mode independent \
   --input-width 1920 --input-height 1080 --output-width 1920 --output-height 1080 --fps 30 \
   --no-ai --record --output-dir /data/recordings --output /data/recordings/archive.h264 \
   --segment-sec 300 --min-free-mb 1024 --no-stream --duration-sec 600
 ```
 
-节点必须由实际 media graph 确认，不默认使用 video0/1。上述命令是板端接入示例，尚未实际运行。SDK 开关开启而依赖缺失会明确失败；应用侧 ENABLE_RKAIQ 尚未适配，直接报错，应使用 BSP aiq 服务。
+节点必须由实际 media graph 确认，不默认使用 video0/1。上述命令是板端接入示例，尚未实际运行。SDK 开关开启而依赖缺失会明确失败；ENABLE_RKAIQ可选接入实际BSP头/库及核验的adapter source，当前没有真实SDK API端口。外部BSP服务模式只做发现，不重复初始化。
 
 AI 需增加 `--ai-mode async --model /data/rat.rknn --model-contract /data/rat.contract --events /data/recordings/events.jsonl`。模型契约必须来自导出 metadata，详见 [RKNN 接入](docs/RKNN_BACKEND_ADAPTATION.md)。当前 adapter 仅支持匹配的 YOLOv5 三头 INT8 schema；普通 rat detector 的 behavior_classes 留空，不虚构行为。`--ai-mode strict` 因未实现而报错。行为状态 OSD 目前为 UNAVAILABLE，事件另存 JSONL。
 
